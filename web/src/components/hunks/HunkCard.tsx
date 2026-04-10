@@ -106,7 +106,7 @@ export function HunkCard({ hunk }: HunkCardProps) {
     return () => document.removeEventListener("selectionchange", handleSelectionChange);
   }, []);
 
-  const isLong = hunk.patch_line_count > 20;
+  const isLong = hunk.patch_line_count > 100;
   const visiblePatch = useMemo(() => {
     if (expanded && fullPatch) {
       return fullPatch;
