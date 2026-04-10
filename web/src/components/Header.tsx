@@ -8,7 +8,7 @@ export function Header({ repoPath, busy, onCopyExport }: HeaderProps) {
   return (
     <header>
       <div>
-        <h1>🌚 review</h1>
+        <h1>🌚 moonreview</h1>
         <div className="meta">{repoPath}</div>
       </div>
       <div className="toolbar">

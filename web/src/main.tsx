@@ -41,7 +41,7 @@ function AppContent() {
         <Toaster closeButton position="bottom-right" richColors />
         <header>
           <div>
-            <h1>🌚 review</h1>
+            <h1>🌚 moonreview</h1>
             <div className="meta">Loading...</div>
           </div>
         </header>
