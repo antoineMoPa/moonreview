@@ -1,4 +1,4 @@
-# 🌚 review (moonreview)
+# 🌚 moonreview
 
 The missing local code review step when working with AI agents.
 
