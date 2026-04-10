@@ -1,5 +1,7 @@
 # 🌚 review (moonreview)
 
+The missing local code review step when working with AI agents.
+
 ![Moon Review Screenshot](screenshot.webp)
 
 Tiny local code review UI for git.
