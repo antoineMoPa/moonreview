@@ -1,0 +1,23 @@
+{
+  "name": "moon-review-web",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build": "node ./web/build.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "highlight.js": "^11.11.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "sonner": "^2.0.7"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "esbuild": "^0.25.3",
+    "typescript": "^5.8.3",
+    "vitest": "^1.6.1"
+  }
+}
