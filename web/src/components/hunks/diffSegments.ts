@@ -10,6 +10,7 @@ type CommentSegment = {
   index: number;
   selection: string;
   comment: string;
+  resolved: boolean;
 };
 
 export type DiffSegment = CodeSegment | CommentSegment;
@@ -67,6 +68,7 @@ function buildCommentSegment(insertion: CommentInsertion): CommentSegment {
     index: insertion.index,
     selection: insertion.entry.selection,
     comment: insertion.entry.comment,
+    resolved: insertion.entry.resolved,
   };
 }
 

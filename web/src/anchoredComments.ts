@@ -1,10 +1,12 @@
 export type AnchoredComment = {
   selection: string;
   comment: string;
+  resolved: boolean;
 };
 
 export const ANCHOR_OPEN = "[[mr-anchor]]";
 export const SELECTION_MARK = "[[selection]]";
+export const RESOLVED_MARK = "[[resolved]]";
 export const COMMENT_MARK = "[[comment]]";
 export const ANCHOR_CLOSE = "[[/mr-anchor]]";
 
@@ -50,27 +52,40 @@ function readSection(lines: string[], start: number, end?: number): string {
 function parseAnchoredBlock(block: string): AnchoredComment | null {
   const lines = normalizeBlockLines(block);
   const selectionMarkerIndex = findMarkerLine(lines, SELECTION_MARK);
+  const resolvedMarkerIndex = findMarkerLine(lines, RESOLVED_MARK);
   const commentMarkerIndex = findMarkerLine(lines, COMMENT_MARK);
 
   if (selectionMarkerIndex < 0 || commentMarkerIndex <= selectionMarkerIndex) {
     return null;
   }
 
+  const resolved =
+    resolvedMarkerIndex > selectionMarkerIndex && resolvedMarkerIndex < commentMarkerIndex;
+
   return {
-    selection: readSection(lines, selectionMarkerIndex + 1, commentMarkerIndex),
+    selection: readSection(
+      lines,
+      selectionMarkerIndex + 1,
+      resolved ? resolvedMarkerIndex : commentMarkerIndex,
+    ),
     comment: readSection(lines, commentMarkerIndex + 1),
+    resolved,
   };
 }
 
 function formatAnchoredComment(entry: AnchoredComment): string {
-  return [
+  const lines = [
     ANCHOR_OPEN,
     SELECTION_MARK,
     entry.selection.trim(),
-    COMMENT_MARK,
-    entry.comment.trim(),
-    ANCHOR_CLOSE,
-  ].join("\n");
+  ];
+
+  if (entry.resolved) {
+    lines.push(RESOLVED_MARK);
+  }
+
+  lines.push(COMMENT_MARK, entry.comment.trim(), ANCHOR_CLOSE);
+  return lines.join("\n");
 }
 
 export function parseAnchoredComments(value: string): AnchoredComment[] {

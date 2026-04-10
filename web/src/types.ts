@@ -12,6 +12,8 @@ export type Hunk = {
 export type SessionState = {
   repo_name: string;
   repo_path: string;
+  read_only: boolean;
+  patch_preview_line_limit: number;
   hunks: Hunk[];
   export_text: string;
 };

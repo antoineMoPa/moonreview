@@ -23,11 +23,14 @@ use serde::{Deserialize, Serialize};
 const HOST: &str = "127.0.0.1";
 const PORT: u16 = 42000;
 const SERVER_URL: &str = "http://127.0.0.1:42000";
+const EXPORT_SERVER_URL: &str = "http://localhost:42000";
+const PATCH_PREVIEW_LINE_LIMIT: usize = 100;
 const INDEX_HTML: &str = include_str!("index.html");
 const APP_JS: &str = include_str!("../web/dist/app.js");
 const APP_CSS: &str = include_str!("../web/dist/app.css");
 const ANCHOR_OPEN: &str = "[[mr-anchor]]";
 const SELECTION_MARK: &str = "[[selection]]";
+const RESOLVED_MARK: &str = "[[resolved]]";
 const COMMENT_MARK: &str = "[[comment]]";
 const ANCHOR_CLOSE: &str = "[[/mr-anchor]]";
 
@@ -43,8 +46,15 @@ struct ServerState {
 
 struct RepoSession {
     repo_path: PathBuf,
+    diff_target: DiffTarget,
     comments: HashMap<String, String>,
     reviewed: HashSet<String>,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+struct DiffTarget {
+    base: Option<String>,
+    pathspec: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -56,6 +66,8 @@ struct SessionOpened {
 struct SessionPayload {
     repo_name: String,
     repo_path: String,
+    read_only: bool,
+    patch_preview_line_limit: usize,
     hunks: Vec<HunkView>,
     export_text: String,
 }
@@ -80,6 +92,7 @@ struct PatchPayload {
 #[derive(Serialize, Deserialize)]
 struct OpenSessionRequest {
     repo_path: String,
+    diff_target: Option<DiffTarget>,
 }
 
 #[derive(Deserialize)]
@@ -113,21 +126,31 @@ struct DiffHunk {
     staged: bool,
 }
 
+enum CliCommand {
+    Help,
+    Serve,
+    Review(Option<String>),
+}
+
 fn main() -> Result<()> {
-    let mut args = env::args().skip(1);
-    match args.next().as_deref() {
-        Some("serve") => {
+    match parse_cli_args(env::args().skip(1).collect::<Vec<_>>())? {
+        CliCommand::Help => {
+            print_help();
+            Ok(())
+        }
+        CliCommand::Serve => {
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
                 .context("failed to build tokio runtime")?;
             runtime.block_on(run_server())
         }
-        _ => launch_review(),
+        CliCommand::Review(target) => launch_review(target),
     }
 }
 
-fn launch_review() -> Result<()> {
+fn launch_review(raw_target: Option<String>) -> Result<()> {
+    let diff_target = parse_review_target(raw_target)?;
     let repo_path = canonicalize_repo(env::current_dir()?)?;
     ensure_server_running()?;
 
@@ -140,6 +163,7 @@ fn launch_review() -> Result<()> {
         .post(format!("{SERVER_URL}/api/session/open"))
         .json(&OpenSessionRequest {
             repo_path: repo_path.display().to_string(),
+            diff_target: Some(diff_target),
         })
         .send()
         .context("failed to connect to review server")?
@@ -154,6 +178,46 @@ fn launch_review() -> Result<()> {
     Ok(())
 }
 
+fn parse_cli_args(args: Vec<String>) -> Result<CliCommand> {
+    match args.as_slice() {
+        [] => Ok(CliCommand::Review(None)),
+        [flag] if matches!(flag.as_str(), "--help" | "-h" | "help") => Ok(CliCommand::Help),
+        [command] if command == "serve" => Ok(CliCommand::Serve),
+        [command] if command == "diff" => Ok(CliCommand::Review(None)),
+        [command, target] if command == "diff" => Ok(CliCommand::Review(Some(target.clone()))),
+        [unexpected, ..] if unexpected.starts_with('-') => {
+            bail!("unknown option: {unexpected}\n\n{}", help_text())
+        }
+        [target] => Ok(CliCommand::Review(Some(target.clone()))),
+        _ => bail!("{}", help_text()),
+    }
+}
+
+fn print_help() {
+    println!("{}", help_text());
+}
+
+fn help_text() -> &'static str {
+    "moonreview
+
+Tiny local code review UI for git.
+
+Usage:
+  moonreview
+  moonreview diff <target>
+  moonreview --help
+
+Examples:
+  moonreview
+  moonreview diff dev
+  moonreview diff dev:./
+
+Run `moonreview` inside any git repository you want to review.
+
+`moonreview diff <target>` opens a read-only diff review against a git target.
+Use `branch:pathspec` to limit the diff to part of the repo, for example `dev:./`."
+}
+
 async fn run_server() -> Result<()> {
     let app = Router::new()
         .route("/", get(root))
@@ -161,6 +225,7 @@ async fn run_server() -> Result<()> {
         .route("/review/{session_id}", get(review_page))
         .route("/assets/app.js", get(app_js))
         .route("/assets/app.css", get(app_css))
+        .route("/api/session/{session_id}/resolve/{hunk_id}/{comment_index}", get(resolve_comment))
         .route("/api/session/open", post(open_session))
         .route("/api/session/{session_id}/state", get(session_state))
         .route("/api/session/{session_id}/hunk/{hunk_id}", get(hunk_patch))
@@ -169,6 +234,7 @@ async fn run_server() -> Result<()> {
         .route("/api/session/{session_id}/stage", post(stage_hunk))
         .route("/api/session/{session_id}/stage-file", post(stage_file))
         .route("/api/session/{session_id}/stage-selection", post(stage_selection))
+        .route("/api/session/{session_id}/discard", post(discard_hunk))
         .route("/api/session/{session_id}/unstage", post(unstage_hunk))
         .route("/api/session/{session_id}/unstage-file", post(unstage_file))
         .with_state(AppState {
@@ -214,11 +280,13 @@ async fn open_session(
     Json(request): Json<OpenSessionRequest>,
 ) -> Result<Json<SessionOpened>, AppError> {
     let repo_path = canonicalize_repo(PathBuf::from(request.repo_path))?;
-    let session_id = session_id_for(&repo_path);
+    let diff_target = request.diff_target.unwrap_or_default();
+    let session_id = session_id_for(&repo_path, &diff_target);
 
     let mut guard = state.inner.lock().map_err(|_| anyhow!("state lock poisoned"))?;
     guard.sessions.insert(session_id.clone(), RepoSession {
         repo_path,
+        diff_target,
         comments: HashMap::new(),
         reviewed: HashSet::new(),
     });
@@ -231,7 +299,7 @@ async fn session_state(
     State(state): State<AppState>,
 ) -> Result<Json<SessionPayload>, AppError> {
     let session = with_session(&state, &session_id, |session| {
-        let hunks = collect_hunks(&session.repo_path)?;
+        let hunks = collect_hunks(&session.repo_path, &session.diff_target)?;
         let views = hunks
             .into_iter()
             .map(|hunk| HunkView {
@@ -245,7 +313,7 @@ async fn session_state(
                 file_path: hunk.file_path,
                 header: hunk.header,
                 staged: hunk.staged,
-                patch_preview: preview_patch(&hunk.patch, 20),
+                patch_preview: preview_patch(&hunk.patch, PATCH_PREVIEW_LINE_LIMIT),
                 patch_line_count: hunk.patch.lines().count(),
             })
             .collect::<Vec<_>>();
@@ -258,7 +326,9 @@ async fn session_state(
                 .unwrap_or("repo")
                 .to_string(),
             repo_path: session.repo_path.display().to_string(),
-            export_text: build_export_text(&views),
+            read_only: session.diff_target.base.is_some(),
+            patch_preview_line_limit: PATCH_PREVIEW_LINE_LIMIT,
+            export_text: build_export_text(&session_id, &views),
             hunks: views,
         })
     })?;
@@ -272,6 +342,33 @@ async fn hunk_patch(
 ) -> Result<Json<PatchPayload>, AppError> {
     let (_, patch, _) = lookup_hunk(&state, &session_id, &hunk_id)?;
     Ok(Json(PatchPayload { patch }))
+}
+
+async fn resolve_comment(
+    AxumPath((session_id, hunk_id, comment_index)): AxumPath<(String, String, usize)>,
+    State(state): State<AppState>,
+) -> Result<&'static str, AppError> {
+    with_session(&state, &session_id, |session| {
+        let Some(existing) = session.comments.get(&hunk_id).cloned() else {
+            bail!("comment no longer exists");
+        };
+
+        let mut anchored = parse_anchored_comments(&existing);
+        let Some(entry) = anchored.get_mut(comment_index) else {
+            bail!("comment index is out of bounds");
+        };
+        entry.resolved = true;
+
+        let next = build_anchored_comment_value(&anchored);
+        if next.trim().is_empty() {
+            session.comments.remove(&hunk_id);
+        } else {
+            session.comments.insert(hunk_id.clone(), next);
+        }
+        Ok(())
+    })?;
+
+    Ok("ok")
 }
 
 async fn toggle_reviewed(
@@ -310,6 +407,7 @@ async fn stage_hunk(
     State(state): State<AppState>,
     Json(request): Json<HunkRequest>,
 ) -> Result<&'static str, AppError> {
+    ensure_session_is_writable(&state, &session_id)?;
     let (repo_path, patch, is_staged) = lookup_hunk(&state, &session_id, &request.hunk_id)?;
     if is_staged {
         return Ok("ok");
@@ -323,6 +421,7 @@ async fn unstage_hunk(
     State(state): State<AppState>,
     Json(request): Json<HunkRequest>,
 ) -> Result<&'static str, AppError> {
+    ensure_session_is_writable(&state, &session_id)?;
     let (repo_path, patch, is_staged) = lookup_hunk(&state, &session_id, &request.hunk_id)?;
     if !is_staged {
         return Ok("ok");
@@ -336,6 +435,7 @@ async fn stage_selection(
     State(state): State<AppState>,
     Json(request): Json<SelectionRequest>,
 ) -> Result<&'static str, AppError> {
+    ensure_session_is_writable(&state, &session_id)?;
     let (repo_path, patch, is_staged) = lookup_hunk(&state, &session_id, &request.hunk_id)?;
     if is_staged {
         return Ok("ok");
@@ -350,8 +450,25 @@ async fn stage_file(
     State(state): State<AppState>,
     Json(request): Json<FileRequest>,
 ) -> Result<&'static str, AppError> {
+    ensure_session_is_writable(&state, &session_id)?;
     let repo_path = with_session(&state, &session_id, |session| Ok(session.repo_path.clone()))?;
     run_git_no_output(&repo_path, &["add", "--", &request.file_path]).map_err(AppError)?;
+    Ok("ok")
+}
+
+async fn discard_hunk(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<HunkRequest>,
+) -> Result<&'static str, AppError> {
+    ensure_session_is_writable(&state, &session_id)?;
+    let (repo_path, patch, is_staged) = lookup_hunk(&state, &session_id, &request.hunk_id)?;
+
+    apply_patch(&repo_path, &patch, false, true)?;
+    if is_staged {
+        apply_patch(&repo_path, &patch, true, true)?;
+    }
+
     Ok("ok")
 }
 
@@ -360,6 +477,7 @@ async fn unstage_file(
     State(state): State<AppState>,
     Json(request): Json<FileRequest>,
 ) -> Result<&'static str, AppError> {
+    ensure_session_is_writable(&state, &session_id)?;
     let repo_path = with_session(&state, &session_id, |session| Ok(session.repo_path.clone()))?;
     run_git_no_output(&repo_path, &["restore", "--staged", "--", &request.file_path]).map_err(AppError)?;
     Ok("ok")
@@ -377,9 +495,18 @@ where
     f(session).map_err(AppError)
 }
 
+fn ensure_session_is_writable(state: &AppState, session_id: &str) -> Result<(), AppError> {
+    with_session(state, session_id, |session| {
+        if session.diff_target.base.is_some() {
+            bail!("range diffs are read-only");
+        }
+        Ok(())
+    })
+}
+
 fn lookup_hunk(state: &AppState, session_id: &str, hunk_id: &str) -> Result<(PathBuf, String, bool), AppError> {
     with_session(state, session_id, |session| {
-        let hunk = collect_hunks(&session.repo_path)?
+        let hunk = collect_hunks(&session.repo_path, &session.diff_target)?
             .into_iter()
             .find(|hunk| hunk.id == hunk_id)
             .ok_or_else(|| anyhow!("hunk no longer exists"))?;
@@ -423,7 +550,12 @@ fn canonicalize_repo(path: impl AsRef<Path>) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn collect_hunks(repo_path: &Path) -> Result<Vec<DiffHunk>> {
+fn collect_hunks(repo_path: &Path, diff_target: &DiffTarget) -> Result<Vec<DiffHunk>> {
+    if let Some(base) = &diff_target.base {
+        let diff = run_target_diff(repo_path, base, diff_target.pathspec.as_deref())?;
+        return parse_diff(&diff, false);
+    }
+
     let mut hunks = parse_diff(&run_git(repo_path, &["diff", "--no-color", "--unified=3"])?, false)?;
     hunks.extend(parse_diff(
         &run_git(repo_path, &["diff", "--cached", "--no-color", "--unified=3"])?,
@@ -438,6 +570,15 @@ fn collect_hunks(repo_path: &Path) -> Result<Vec<DiffHunk>> {
         hunks.extend(parse_diff(&diff, false)?);
     }
     Ok(hunks)
+}
+
+fn run_target_diff(repo_path: &Path, base: &str, pathspec: Option<&str>) -> Result<String> {
+    let mut args = vec!["diff", "--no-color", "--unified=3", base];
+    if let Some(pathspec) = pathspec.filter(|value| !value.is_empty()) {
+        args.push("--");
+        args.push(pathspec);
+    }
+    run_git(repo_path, &args)
 }
 
 fn parse_diff(diff: &str, staged: bool) -> Result<Vec<DiffHunk>> {
@@ -537,31 +678,40 @@ fn run_git_allow_status(repo_path: &Path, args: &[&str], allowed: &[i32]) -> Res
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-fn build_export_text(hunks: &[HunkView]) -> String {
+fn build_export_text(session_id: &str, hunks: &[HunkView]) -> String {
     let mut out = String::new();
     out.push_str("Moon Review notes\n");
     out.push_str("=================\n");
-    out.push_str("Please fix these code issues:\n\n");
+    out.push_str("Please fix these code issues and mark as resolved:\n\n");
 
     for hunk in hunks.iter().filter(|h| h.reviewed || !h.comment.trim().is_empty()) {
         let anchored = parse_anchored_comments(&hunk.comment);
-        if anchored.is_empty() {
+        if anchored.iter().all(|entry| entry.resolved) {
             continue;
         }
 
         out.push_str(&format!("{} {}\n", hunk.file_path, hunk.header));
-        for entry in anchored {
+        for (comment_index, entry) in anchored.into_iter().enumerate() {
+            if entry.resolved {
+                continue;
+            }
             out.push_str("Selected code: ");
             out.push_str(&entry.selection);
             out.push('\n');
             out.push_str("Issue: ");
             out.push_str(&entry.comment);
             out.push('\n');
+            out.push_str("Poke this url when done: ");
+            out.push_str(&format!(
+                "{EXPORT_SERVER_URL}/api/session/{session_id}/resolve/{}/{comment_index}",
+                hunk.id
+            ));
+            out.push('\n');
             out.push('\n');
         }
     }
 
-    if out.trim() == "Moon Review notes\n=================\nPlease fix these code issues:" {
+    if out.trim() == "Moon Review notes\n=================\nPlease fix these code issues and mark as resolved:" {
         out.push_str("No review notes yet.\n");
     }
 
@@ -571,6 +721,24 @@ fn build_export_text(hunks: &[HunkView]) -> String {
 struct AnchoredComment {
     selection: String,
     comment: String,
+    resolved: bool,
+}
+
+fn build_anchored_comment_value(comments: &[AnchoredComment]) -> String {
+    comments
+        .iter()
+        .map(|entry| {
+            let mut lines = vec![ANCHOR_OPEN.to_string(), SELECTION_MARK.to_string(), entry.selection.trim().to_string()];
+            if entry.resolved {
+                lines.push(RESOLVED_MARK.to_string());
+            }
+            lines.push(COMMENT_MARK.to_string());
+            lines.push(entry.comment.trim().to_string());
+            lines.push(ANCHOR_CLOSE.to_string());
+            lines.join("\n")
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 fn anchored_comments_only(value: &str) -> String {
@@ -607,6 +775,9 @@ fn parse_anchored_comments(value: &str) -> Vec<AnchoredComment> {
             break;
         };
         let selection = after_selection_mark[..comment_start].trim();
+        let resolved = after_selection_mark
+            .find(RESOLVED_MARK)
+            .is_some_and(|index| index < comment_start);
         let after_comment_mark = &after_selection_mark[comment_start + COMMENT_MARK.len()..];
         let Some(close_start) = after_comment_mark.find(ANCHOR_CLOSE) else {
             break;
@@ -617,6 +788,7 @@ fn parse_anchored_comments(value: &str) -> Vec<AnchoredComment> {
             comments.push(AnchoredComment {
                 selection: selection.to_string(),
                 comment: comment.to_string(),
+                resolved,
             });
         }
 
@@ -792,8 +964,34 @@ fn stable_id<T: Hash>(value: &T) -> String {
     format!("{:x}", hasher.finish())
 }
 
-fn session_id_for(path: &Path) -> String {
-    stable_id(&path.display().to_string())
+fn session_id_for(path: &Path, diff_target: &DiffTarget) -> String {
+    stable_id(&(path.display().to_string(), diff_target.base.clone(), diff_target.pathspec.clone()))
+}
+
+fn parse_review_target(raw: Option<String>) -> Result<DiffTarget> {
+    let Some(value) = raw else {
+        return Ok(DiffTarget::default());
+    };
+
+    if value == "serve" {
+        return Ok(DiffTarget::default());
+    }
+
+    if let Some((base, pathspec)) = value.split_once(':') {
+        if base.trim().is_empty() {
+            bail!("diff target base cannot be empty");
+        }
+
+        return Ok(DiffTarget {
+            base: Some(base.trim().to_string()),
+            pathspec: Some(pathspec.trim().to_string()),
+        });
+    }
+
+    Ok(DiffTarget {
+        base: Some(value),
+        pathspec: None,
+    })
 }
 
 #[derive(Debug)]

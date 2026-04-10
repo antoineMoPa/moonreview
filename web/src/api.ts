@@ -58,6 +58,13 @@ export function stageSelection(hunkId: string, selection: string): Promise<strin
   });
 }
 
+export function discardHunk(hunkId: string): Promise<string> {
+  return request<string>(`/api/session/${sessionId}/discard`, {
+    method: "POST",
+    body: JSON.stringify({ hunk_id: hunkId }),
+  });
+}
+
 export function saveComment(hunkId: string, comment: string): Promise<string> {
   return request<string>(`/api/session/${sessionId}/comment`, {
     method: "POST",

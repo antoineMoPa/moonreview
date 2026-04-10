@@ -356,10 +356,18 @@ pre {
   letter-spacing: 0.04em;
 }
 
+.inline-comment-label.resolved {
+  color: var(--accent-2);
+}
+
 .inline-comment-body {
   white-space: pre-wrap;
   font: 1rem monospace;
   color: var(--code);
+}
+
+.inline-comment-body.resolved {
+  color: var(--muted);
 }
 
 .selection-preview {

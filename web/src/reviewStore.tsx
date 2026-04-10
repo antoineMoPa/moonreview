@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useMemo, useReducer } from "react";
 import { toast } from "sonner";
+import { getSessionId } from "./api";
 import {
+  discardHunk as discardHunkRequest,
   fetchSessionState,
   saveComment as saveCommentRequest,
   stageSelection as stageSelectionRequest,
@@ -23,6 +25,7 @@ type ReviewStoreValue = {
     toggleStage: (hunkId: string, staged: boolean) => Promise<void>;
     toggleStageFile: (filePath: string, staged: boolean) => Promise<void>;
     stageSelection: (hunkId: string, selection: string) => Promise<void>;
+    discardHunk: (hunkId: string) => Promise<void>;
     updateDraftComment: (hunkId: string, comment: string) => void;
     saveComment: (hunkId: string, comment: string) => Promise<void>;
   };
@@ -36,25 +39,32 @@ type ReviewStoreAction =
   | { type: "draft_comment_updated"; hunkId: string; comment: string };
 
 const ReviewStoreContext = createContext<ReviewStoreValue | null>(null);
+const EXPORT_SERVER_URL = "http://localhost:42000";
 
 function buildExportText(hunks: Hunk[]): string {
-  const lines = ["Moon Review notes", "=================", "Please fix these code issues:", ""];
+  const lines = ["Moon Review notes", "=================", "Please fix these code issues and mark as resolved:", ""];
+  const sessionId = getSessionId();
 
   for (const hunk of hunks.filter((item) => item.comment.trim())) {
     const anchored = parseAnchoredComments(hunk.comment);
-    if (anchored.length === 0) {
+    const unresolved = anchored.filter((entry) => !entry.resolved);
+    if (unresolved.length === 0) {
       continue;
     }
 
     lines.push(`${hunk.file_path} ${hunk.header}`);
-    for (const entry of anchored) {
+    for (const entry of unresolved) {
+      const commentIndex = anchored.indexOf(entry);
       lines.push(`Selected code: ${entry.selection}`);
       lines.push(`Issue: ${entry.comment}`);
+      lines.push(
+        `Poke this url when done: ${EXPORT_SERVER_URL}/api/session/${sessionId}/resolve/${hunk.id}/${commentIndex}`,
+      );
       lines.push("");
     }
   }
 
-  if (lines.join("\n").trim() === "Moon Review notes\n=================\nPlease fix these code issues:") {
+  if (lines.join("\n").trim() === "Moon Review notes\n=================\nPlease fix these code issues and mark as resolved:") {
     lines.push("No review notes yet.");
   }
 
@@ -154,6 +164,7 @@ export function ReviewStoreProvider({ children }: { children: React.ReactNode })
         toggleStage: async (hunkId, staged) => mutate(() => toggleStageRequest(hunkId, staged)),
         toggleStageFile: async (filePath, staged) => mutate(() => toggleStageFileRequest(filePath, staged)),
         stageSelection: async (hunkId, selection) => mutate(() => stageSelectionRequest(hunkId, selection)),
+        discardHunk: async (hunkId) => mutate(() => discardHunkRequest(hunkId)),
         updateDraftComment,
         saveComment: async (hunkId, comment) => mutate(() => saveCommentRequest(hunkId, comment)),
       },

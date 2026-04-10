@@ -3,6 +3,7 @@ import {
   ANCHOR_CLOSE,
   ANCHOR_OPEN,
   COMMENT_MARK,
+  RESOLVED_MARK,
   SELECTION_MARK,
   parseAnchoredComments,
 } from "./anchoredComments";
@@ -31,10 +32,12 @@ describe("parseAnchoredComments", () => {
       {
         selection: "+ const first = true;\n  + const second = false;",
         comment: "use clearer names",
+        resolved: false,
       },
       {
         selection: "- oldValue",
         comment: "replace with the new field",
+        resolved: false,
       },
     ]);
   });
@@ -57,6 +60,7 @@ describe("parseAnchoredComments", () => {
       {
         selection: "+ valid line",
         comment: "valid comment",
+        resolved: false,
       },
     ]);
   });
@@ -75,6 +79,27 @@ describe("parseAnchoredComments", () => {
       {
         selection: "+ windows line",
         comment: "works on CRLF too",
+        resolved: false,
+      },
+    ]);
+  });
+
+  it("parses resolved comments", () => {
+    const value = [
+      ANCHOR_OPEN,
+      SELECTION_MARK,
+      "+ done line",
+      RESOLVED_MARK,
+      COMMENT_MARK,
+      "already handled",
+      ANCHOR_CLOSE,
+    ].join("\n");
+
+    expect(parseAnchoredComments(value)).toEqual([
+      {
+        selection: "+ done line",
+        comment: "already handled",
+        resolved: true,
       },
     ]);
   });

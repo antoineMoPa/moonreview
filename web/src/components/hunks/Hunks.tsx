@@ -35,9 +35,13 @@ function FileAccordion({
   hunks: Hunk[];
   defaultOpen: boolean;
 }) {
-  const { actions } = useReviewStore();
+  const {
+    state: { data },
+    actions,
+  } = useReviewStore();
   const [open, setOpen] = useState(defaultOpen);
   const staged = hunks[0]?.staged ?? false;
+  const readOnly = data?.read_only ?? false;
 
   return (
     <div className="file-accordion">
@@ -48,9 +52,11 @@ function FileAccordion({
         <span className="file-accordion-meta">
           <span className={`badge ${staged ? "staged" : ""}`.trim()}>{staged ? "Staged" : "Unstaged"}</span>
           <span className="muted">{hunks.length}</span>
-          <button onClick={() => void actions.toggleStageFile(filePath, staged)}>
-            {staged ? "Unstage File" : "Stage File"}
-          </button>
+          {!readOnly ? (
+            <button onClick={() => void actions.toggleStageFile(filePath, staged)}>
+              {staged ? "Unstage File" : "Stage File"}
+            </button>
+          ) : null}
         </span>
       </div>
       <div className={`collapsible-content ${open ? "" : "collapsible-content-collapsed"}`.trim()}>

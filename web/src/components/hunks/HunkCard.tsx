@@ -19,6 +19,23 @@ type HunkCardProps = {
   hunk: Hunk;
 };
 
+function selectionLivesWithin(container: Node, selection: Selection): boolean {
+  if (selection.rangeCount === 0) {
+    return false;
+  }
+
+  return container.contains(selection.getRangeAt(0).commonAncestorContainer);
+}
+
+function readSelection(container: Node): Selection | null {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed) {
+    return null;
+  }
+
+  return selectionLivesWithin(container, selection) ? selection : null;
+}
+
 function HighlightedCode({
   text,
   truncated,
@@ -53,7 +70,10 @@ function HighlightedCode({
 }
 
 export function HunkCard({ hunk }: HunkCardProps) {
-  const { actions } = useReviewStore();
+  const {
+    state: { data },
+    actions,
+  } = useReviewStore();
   const hunkRef = useRef<HTMLElement | null>(null);
   const composerOpenRef = useRef(false);
   const [expanded, setExpanded] = useState(false);
@@ -95,9 +115,7 @@ export function HunkCard({ hunk }: HunkCardProps) {
         return;
       }
 
-      const anchorInside = selection.anchorNode && root.contains(selection.anchorNode);
-      const focusInside = selection.focusNode && root.contains(selection.focusNode);
-      if (!anchorInside || !focusInside) {
+      if (!selectionLivesWithin(root, selection)) {
         clearSelectionUi();
       }
     }
@@ -106,7 +124,8 @@ export function HunkCard({ hunk }: HunkCardProps) {
     return () => document.removeEventListener("selectionchange", handleSelectionChange);
   }, []);
 
-  const isLong = hunk.patch_line_count > 100;
+  const patchPreviewLineLimit = data?.patch_preview_line_limit ?? 100;
+  const isLong = hunk.patch_line_count > patchPreviewLineLimit;
   const visiblePatch = useMemo(() => {
     if (expanded && fullPatch) {
       return fullPatch;
@@ -119,32 +138,31 @@ export function HunkCard({ hunk }: HunkCardProps) {
     () => splitDiffIntoSegments(visiblePatch, parsedComments),
     [visiblePatch, parsedComments],
   );
+  const readOnly = data?.read_only ?? false;
 
   function captureSelection(container: HTMLPreElement) {
     if (composerOpenRef.current) {
       return;
     }
 
-    const selection = window.getSelection();
-    if (!selection || selection.isCollapsed) {
-      return;
-    }
+    window.requestAnimationFrame(() => {
+      const selection = readSelection(container);
+      if (!selection) {
+        return;
+      }
 
-    const text = selection.toString().trim();
-    if (!text) {
-      return;
-    }
+      const text = selection.toString().trim();
+      if (!text) {
+        return;
+      }
 
-    if (!container.contains(selection.anchorNode) || !container.contains(selection.focusNode)) {
-      return;
-    }
-
-    const rect = selection.getRangeAt(0).getBoundingClientRect();
-    setSelectedText(text);
-    setComposerOpen(false);
-    setSelectionPosition({
-      top: rect.bottom + window.scrollY + 8,
-      left: Math.min(rect.left + window.scrollX, window.scrollX + window.innerWidth - 280),
+      const rect = selection.getRangeAt(0).getBoundingClientRect();
+      setSelectedText(text);
+      setComposerOpen(false);
+      setSelectionPosition({
+        top: rect.bottom + window.scrollY + 8,
+        left: Math.min(rect.left + window.scrollX, window.scrollX + window.innerWidth - 280),
+      });
     });
   }
 
@@ -165,7 +183,7 @@ export function HunkCard({ hunk }: HunkCardProps) {
     }
 
     const next = buildAnchoredCommentValue([
-      { selection: activeSelectedText, comment: selectionNote },
+      { selection: activeSelectedText, comment: selectionNote, resolved: false },
       ...parsedComments,
     ]).trim();
 
@@ -205,6 +223,13 @@ export function HunkCard({ hunk }: HunkCardProps) {
     setEditingCommentValue("");
   }
 
+  function toggleCommentResolved(index: number) {
+    const nextAnchored = parsedComments.map((entry, entryIndex) =>
+      entryIndex === index ? { ...entry, resolved: !entry.resolved } : entry,
+    );
+    persistAnchoredComments(nextAnchored);
+  }
+
   async function toggleExpanded() {
     if (expanded) {
       setExpanded(false);
@@ -227,9 +252,14 @@ export function HunkCard({ hunk }: HunkCardProps) {
   return (
     <article className="panel hunk" ref={hunkRef}>
       <div className="hunk-actions">
-        <button onClick={() => void actions.toggleStage(hunk.id, hunk.staged)}>
-          {hunk.staged ? "Unstage Hunk" : "Stage Hunk"}
-        </button>
+        {!readOnly ? (
+          <>
+            <button onClick={() => void actions.toggleStage(hunk.id, hunk.staged)}>
+              {hunk.staged ? "Unstage Hunk" : "Stage Hunk"}
+            </button>
+            <button onClick={() => void actions.discardHunk(hunk.id)}>Discard Hunk</button>
+          </>
+        ) : null}
         {isLong && expanded ? <button onClick={() => void toggleExpanded()}>Collapse Diff</button> : null}
       </div>
 
@@ -242,10 +272,14 @@ export function HunkCard({ hunk }: HunkCardProps) {
             setLockedSelectionPosition(selectionPosition);
             setComposerOpen(true);
           }}
-          onStageLines={() => {
-            void actions.stageSelection(hunk.id, selectedText);
-            clearSelectionUi();
-          }}
+          onStageLines={
+            readOnly
+              ? undefined
+              : () => {
+                  void actions.stageSelection(hunk.id, selectedText);
+                  clearSelectionUi();
+                }
+          }
         />
       ) : null}
 
@@ -273,8 +307,13 @@ export function HunkCard({ hunk }: HunkCardProps) {
             ) : (
               <div className="inline-comment-card" key={`comment-${index}`}>
                 <div className="inline-comment-head">
-                  <div className="inline-comment-label">Comment</div>
+                  <div className={`inline-comment-label ${segment.resolved ? "resolved" : ""}`.trim()}>
+                    {segment.resolved ? "Resolved" : "Comment"}
+                  </div>
                   <div className="toolbar">
+                    <button onClick={() => toggleCommentResolved(segment.index)}>
+                      {segment.resolved ? "Reopen" : "Resolve"}
+                    </button>
                     {editingCommentIndex === segment.index ? (
                       <button onClick={() => saveEditedComment(segment.index)}>Save</button>
                     ) : (
@@ -291,7 +330,9 @@ export function HunkCard({ hunk }: HunkCardProps) {
                     spellCheck={false}
                   />
                 ) : (
-                  <div className="inline-comment-body">{segment.comment}</div>
+                  <div className={`inline-comment-body ${segment.resolved ? "resolved" : ""}`.trim()}>
+                    {segment.comment}
+                  </div>
                 )}
               </div>
             ),
