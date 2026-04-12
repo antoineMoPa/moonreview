@@ -40,13 +40,22 @@ function readSelection(container: Node): Selection | null {
   return selectionLivesWithin(container, selection) ? selection : null;
 }
 
+function selectionPositionFromRect(rect: DOMRect) {
+  return {
+    top: rect.bottom + window.scrollY + 8,
+    left: Math.min(rect.left + window.scrollX, window.scrollX + window.innerWidth - 280),
+  };
+}
+
 function HighlightedCode({
   text,
   truncated,
+  onSelectionStart,
   onSelection,
 }: {
   text: string;
   truncated: boolean;
+  onSelectionStart: () => void;
   onSelection: (container: HTMLPreElement) => void;
 }) {
   const codeRef = useRef<HTMLElement | null>(null);
@@ -63,6 +72,7 @@ function HighlightedCode({
   return (
     <pre
       className={truncated ? "code-pre-truncated" : undefined}
+      onMouseDown={onSelectionStart}
       onMouseUp={(event) => onSelection(event.currentTarget)}
       onKeyUp={(event) => onSelection(event.currentTarget)}
     >
@@ -80,6 +90,7 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
   } = useReviewStore();
   const hunkRef = useRef<HTMLElement | null>(null);
   const composerOpenRef = useRef(false);
+  const selectionStartedInHunkRef = useRef(false);
   const [expanded, setExpanded] = useState(false);
   const [fullPatch, setFullPatch] = useState<string | null>(null);
   const [loadingPatch, setLoadingPatch] = useState(false);
@@ -102,8 +113,31 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
   }, [composerOpen]);
 
   useEffect(() => {
+    function finalizeSelectionFromRoot() {
+      if (composerOpenRef.current) {
+        return;
+      }
+
+      if (!selectionStartedInHunkRef.current) {
+        return;
+      }
+
+      const root = hunkRef.current;
+      if (!root) {
+        selectionStartedInHunkRef.current = false;
+        return;
+      }
+
+      captureSelection(root);
+      selectionStartedInHunkRef.current = false;
+    }
+
     function handleSelectionChange() {
       if (composerOpenRef.current) {
+        return;
+      }
+
+      if (selectionStartedInHunkRef.current) {
         return;
       }
 
@@ -125,7 +159,13 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
     }
 
     document.addEventListener("selectionchange", handleSelectionChange);
-    return () => document.removeEventListener("selectionchange", handleSelectionChange);
+    window.addEventListener("mouseup", finalizeSelectionFromRoot);
+    window.addEventListener("keyup", finalizeSelectionFromRoot);
+    return () => {
+      document.removeEventListener("selectionchange", handleSelectionChange);
+      window.removeEventListener("mouseup", finalizeSelectionFromRoot);
+      window.removeEventListener("keyup", finalizeSelectionFromRoot);
+    };
   }, []);
 
   const patchPreviewLineLimit = data?.patch_preview_line_limit ?? 100;
@@ -144,7 +184,7 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
   );
   const readOnly = data?.read_only ?? false;
 
-  function captureSelection(container: HTMLPreElement) {
+  function captureSelection(container: Node) {
     if (composerOpenRef.current) {
       return;
     }
@@ -163,10 +203,7 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
       const rect = selection.getRangeAt(0).getBoundingClientRect();
       setSelectedText(text);
       setComposerOpen(false);
-      setSelectionPosition({
-        top: rect.bottom + window.scrollY + 8,
-        left: Math.min(rect.left + window.scrollX, window.scrollX + window.innerWidth - 280),
-      });
+      setSelectionPosition(selectionPositionFromRect(rect));
     });
   }
 
@@ -317,6 +354,9 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
                 key={`code-${index}`}
                 text={segment.text}
                 truncated={!expanded && isLong && index === diffSegments.length - 1}
+                onSelectionStart={() => {
+                  selectionStartedInHunkRef.current = true;
+                }}
                 onSelection={captureSelection}
               />
             ) : (
