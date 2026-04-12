@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useReviewStore } from "../../reviewStore";
-import type { Hunk } from "../../types";
+import type { AgentKind, AgentOption, Hunk } from "../../types";
 import { HunkCard } from "./HunkCard";
 
 type HunksProps = {
   hunks: Hunk[];
+  agents: AgentOption[];
+  selectedAgent: AgentKind;
+  onAgentChange: (agent: AgentKind) => void;
 };
 
 type FileGroup = {
@@ -29,10 +32,16 @@ function groupByFile(hunks: Hunk[]): FileGroup[] {
 function FileAccordion({
   filePath,
   hunks,
+  agents,
+  selectedAgent,
+  onAgentChange,
   defaultOpen,
 }: {
   filePath: string;
   hunks: Hunk[];
+  agents: AgentOption[];
+  selectedAgent: AgentKind;
+  onAgentChange: (agent: AgentKind) => void;
   defaultOpen: boolean;
 }) {
   const {
@@ -61,14 +70,20 @@ function FileAccordion({
       </div>
       <div className={`collapsible-content ${open ? "" : "collapsible-content-collapsed"}`.trim()}>
         {hunks.map((hunk) => (
-          <HunkCard key={hunk.id} hunk={hunk} />
+          <HunkCard
+            key={hunk.id}
+            hunk={hunk}
+            agents={agents}
+            selectedAgent={selectedAgent}
+            onAgentChange={onAgentChange}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-export function Hunks({ hunks }: HunksProps) {
+export function Hunks({ hunks, agents, selectedAgent, onAgentChange }: HunksProps) {
   const [unstagedOpen, setUnstagedOpen] = useState(true);
   const [stagedOpen, setStagedOpen] = useState(false);
   const unstagedGroups = useMemo(() => groupByFile(hunks.filter((hunk) => !hunk.staged)), [hunks]);
@@ -92,6 +107,9 @@ export function Hunks({ hunks }: HunksProps) {
                 key={group.filePath}
                 filePath={group.filePath}
                 hunks={group.hunks}
+                agents={agents}
+                selectedAgent={selectedAgent}
+                onAgentChange={onAgentChange}
                 defaultOpen={true}
               />
             ))
@@ -113,6 +131,9 @@ export function Hunks({ hunks }: HunksProps) {
                 key={group.filePath}
                 filePath={group.filePath}
                 hunks={group.hunks}
+                agents={agents}
+                selectedAgent={selectedAgent}
+                onAgentChange={onAgentChange}
                 defaultOpen={false}
               />
             ))

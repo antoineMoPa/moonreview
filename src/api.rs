@@ -1,0 +1,233 @@
+use std::{
+    collections::{HashMap, HashSet},
+    hash::{Hash, Hasher},
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+};
+
+use anyhow::{Result, anyhow, bail};
+use axum::response::IntoResponse;
+use serde::{Deserialize, Serialize};
+
+use crate::{comments::CommentDispatchState, git::collect_hunks};
+
+pub(crate) const HOST: &str = "127.0.0.1";
+pub(crate) const PORT: u16 = 42000;
+pub(crate) const SERVER_URL: &str = "http://127.0.0.1:42000";
+pub(crate) const EXPORT_SERVER_URL: &str = "http://localhost:42000";
+
+#[derive(Clone)]
+pub(crate) struct AppState {
+    pub(crate) inner: Arc<Mutex<ServerState>>,
+    pub(crate) agent_availability: AgentAvailability,
+}
+
+#[derive(Default)]
+pub(crate) struct ServerState {
+    pub(crate) sessions: HashMap<String, RepoSession>,
+}
+
+pub(crate) struct RepoSession {
+    pub(crate) repo_path: PathBuf,
+    pub(crate) diff_target: DiffTarget,
+    pub(crate) comments: HashMap<String, String>,
+    pub(crate) reviewed: HashSet<String>,
+    pub(crate) selected_agent: AgentKind,
+    pub(crate) comment_dispatches: HashMap<String, CommentDispatchState>,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub(crate) struct DiffTarget {
+    pub(crate) base: Option<String>,
+    pub(crate) pathspec: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct SessionOpened {
+    pub(crate) session_id: String,
+}
+
+#[derive(Serialize)]
+pub(crate) struct SessionPayload {
+    pub(crate) repo_name: String,
+    pub(crate) repo_path: String,
+    pub(crate) read_only: bool,
+    pub(crate) patch_preview_line_limit: usize,
+    pub(crate) available_agents: Vec<AgentOption>,
+    pub(crate) selected_agent: AgentKind,
+    pub(crate) hunks: Vec<HunkView>,
+    pub(crate) export_text: String,
+}
+
+#[derive(Serialize, Clone)]
+pub(crate) struct HunkView {
+    pub(crate) id: String,
+    pub(crate) file_path: String,
+    pub(crate) header: String,
+    pub(crate) staged: bool,
+    pub(crate) reviewed: bool,
+    pub(crate) comment: String,
+    pub(crate) comment_dispatches: Vec<CommentDispatchView>,
+    pub(crate) patch_preview: String,
+    pub(crate) patch_line_count: usize,
+}
+
+#[derive(Clone, Copy, Default, Serialize)]
+pub(crate) struct AgentAvailability {
+    pub(crate) claude: bool,
+    pub(crate) codex: bool,
+}
+
+#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum AgentKind {
+    #[default]
+    None,
+    Claude,
+    Codex,
+}
+
+impl AgentKind {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::None => "None",
+            Self::Claude => "Claude",
+            Self::Codex => "Codex",
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
+pub(crate) struct AgentOption {
+    pub(crate) kind: AgentKind,
+    pub(crate) label: &'static str,
+    pub(crate) available: bool,
+}
+
+#[derive(Clone, Copy, Default, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum CommentDispatchStatus {
+    #[default]
+    Idle,
+    Queued,
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Default, Serialize)]
+pub(crate) struct CommentDispatchView {
+    pub(crate) status: CommentDispatchStatus,
+    pub(crate) detail: String,
+    pub(crate) can_cancel: bool,
+}
+
+#[derive(Serialize)]
+pub(crate) struct PatchPayload {
+    pub(crate) patch: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct OpenSessionRequest {
+    pub(crate) repo_path: String,
+    pub(crate) diff_target: Option<DiffTarget>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct HunkRequest {
+    pub(crate) hunk_id: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct FileRequest {
+    pub(crate) file_path: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct CommentRequest {
+    pub(crate) hunk_id: String,
+    pub(crate) comment: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct AgentSelectionRequest {
+    pub(crate) agent: AgentKind,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct SelectionRequest {
+    pub(crate) hunk_id: String,
+    pub(crate) selection: String,
+}
+
+#[derive(Clone)]
+pub(crate) struct DiffHunk {
+    pub(crate) id: String,
+    pub(crate) file_path: String,
+    pub(crate) header: String,
+    pub(crate) patch: String,
+    pub(crate) staged: bool,
+}
+
+#[derive(Debug)]
+pub(crate) struct AppError(pub(crate) anyhow::Error);
+
+impl<E> From<E> for AppError
+where
+    E: Into<anyhow::Error>,
+{
+    fn from(value: E) -> Self {
+        Self(value.into())
+    }
+}
+
+impl IntoResponse for AppError {
+    fn into_response(self) -> axum::response::Response {
+        (axum::http::StatusCode::BAD_REQUEST, self.0.to_string()).into_response()
+    }
+}
+
+pub(crate) fn with_session<T, F>(state: &AppState, session_id: &str, mut f: F) -> Result<T, AppError>
+where
+    F: FnMut(&mut RepoSession) -> Result<T>,
+{
+    let mut guard = state.inner.lock().map_err(|_| anyhow!("state lock poisoned"))?;
+    let session = guard
+        .sessions
+        .get_mut(session_id)
+        .ok_or_else(|| anyhow!("unknown session"))?;
+    f(session).map_err(AppError)
+}
+
+pub(crate) fn ensure_session_is_writable(state: &AppState, session_id: &str) -> Result<(), AppError> {
+    with_session(state, session_id, |session| {
+        if session.diff_target.base.is_some() {
+            bail!("range diffs are read-only");
+        }
+        Ok(())
+    })
+}
+
+pub(crate) fn lookup_hunk(
+    state: &AppState,
+    session_id: &str,
+    hunk_id: &str,
+) -> Result<(PathBuf, String, bool), AppError> {
+    with_session(state, session_id, |session| {
+        let hunk = collect_hunks(&session.repo_path, &session.diff_target)?
+            .into_iter()
+            .find(|hunk| hunk.id == hunk_id)
+            .ok_or_else(|| anyhow!("hunk no longer exists"))?;
+        Ok((session.repo_path.clone(), hunk.patch, hunk.staged))
+    })
+}
+
+pub(crate) fn stable_id<T: Hash>(value: &T) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    value.hash(&mut hasher);
+    format!("{:x}", hasher.finish())
+}
+
+pub(crate) fn session_id_for(path: &Path, diff_target: &DiffTarget) -> String {
+    stable_id(&(path.display().to_string(), diff_target.base.clone(), diff_target.pathspec.clone()))
+}

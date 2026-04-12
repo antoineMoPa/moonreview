@@ -135,6 +135,37 @@ button:disabled {
   cursor: progress;
 }
 
+select {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  border-radius: 3px;
+  padding: 0.5rem 0.7rem;
+  font: inherit;
+}
+
+.agent-picker {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.agent-picker-inline {
+  margin-top: 0.1rem;
+}
+
+.agent-picker-compact {
+  display: inline-grid;
+  gap: 0.15rem;
+  min-width: 10rem;
+}
+
+.agent-picker-compact select {
+  width: 11rem;
+  padding: 0.6rem 0.55rem;
+}
+
 .hunk {
   display: grid;
   gap: 0.8rem;
@@ -368,6 +399,33 @@ pre {
 
 .inline-comment-body.resolved {
   color: var(--muted);
+}
+
+.dispatch-status {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: 3px;
+  font-size: 0.9rem;
+  background: rgba(39, 93, 82, 0.08);
+  color: var(--ink);
+}
+
+.dispatch-status strong {
+  text-transform: capitalize;
+}
+
+.dispatch-status-sending {
+  background: rgba(183, 82, 45, 0.1);
+}
+
+.dispatch-status-sent {
+  background: rgba(39, 93, 82, 0.1);
+}
+
+.dispatch-status-failed {
+  background: rgba(143, 53, 38, 0.12);
+  color: var(--warn);
 }
 
 .selection-preview {

@@ -7,6 +7,9 @@ import { Footer } from "./components/Footer";
 import { Header } from "./components/Header";
 import { Hunks } from "./components/hunks/Hunks";
 import { ReviewStoreProvider, useReviewStore } from "./reviewStore";
+import type { AgentKind } from "./types";
+
+const AGENT_STORAGE_KEY = "moonreview:selected-agent";
 
 function summaryStats(data: NonNullable<ReturnType<typeof useReviewStore>["state"]["data"]>) {
   const staged = data.hunks.filter((hunk) => hunk.staged).length;
@@ -20,6 +23,7 @@ function summaryStats(data: NonNullable<ReturnType<typeof useReviewStore>["state
 function AppContent() {
   const {
     state: { data, loadError, busy },
+    actions,
   } = useReviewStore();
 
   async function handleCopyReview() {
@@ -33,6 +37,30 @@ function AppContent() {
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to copy review.");
     }
+  }
+
+  useEffect(() => {
+    if (!data) {
+      return;
+    }
+
+    const storedAgent = window.localStorage.getItem(AGENT_STORAGE_KEY) as AgentKind | null;
+    if (!storedAgent || storedAgent === data.selected_agent) {
+      return;
+    }
+
+    const storedAgentOption = data.available_agents.find((agent) => agent.kind === storedAgent);
+    if (!storedAgentOption || !storedAgentOption.available) {
+      window.localStorage.removeItem(AGENT_STORAGE_KEY);
+      return;
+    }
+
+    void actions.setAgent(storedAgent);
+  }, [actions, data]);
+
+  function handleAgentChange(agent: AgentKind) {
+    window.localStorage.setItem(AGENT_STORAGE_KEY, agent);
+    void actions.setAgent(agent);
   }
 
   if (!data) {
@@ -72,7 +100,12 @@ function AppContent() {
         <section className="summary-line">
           <strong>{stats.total}</strong> hunks <span className="summary-separator">|</span> <strong>{stats.staged}</strong> staged <span className="summary-separator">|</span> <strong>{stats.comments}</strong> comments
         </section>
-        <Hunks hunks={data.hunks} />
+        <Hunks
+          hunks={data.hunks}
+          agents={data.available_agents}
+          selectedAgent={data.selected_agent}
+          onAgentChange={handleAgentChange}
+        />
         <Footer exportText={data.export_text} />
       </main>
     </>

@@ -1,0 +1,362 @@
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
+
+use anyhow::{Context, Result, anyhow, bail};
+use axum::{
+    Json, Router,
+    extract::{Path as AxumPath, State},
+    response::{Html, IntoResponse},
+    routing::{get, post},
+};
+
+use crate::{
+    api::{
+        AgentKind, AppError, AppState, HunkView, PatchPayload, RepoSession, SelectionRequest,
+        ServerState, SessionOpened, SessionPayload, HOST, OpenSessionRequest, PORT,
+    },
+    comments::{
+        anchored_comment_key, anchored_comments_only, build_anchored_comment_value, build_export_text,
+        comment_dispatch_view, parse_anchored_comments, plan_comment_dispatches,
+        spawn_comment_dispatch,
+    },
+    git::{
+        agent_is_available, agent_options, apply_patch, build_partial_patch_from_selection,
+        canonicalize_repo, collect_hunks, detect_agent_availability, preview_patch, run_git_no_output,
+    },
+};
+
+const PATCH_PREVIEW_LINE_LIMIT: usize = 100;
+const INDEX_HTML: &str = include_str!("index.html");
+const APP_JS: &str = include_str!("../web/dist/app.js");
+const APP_CSS: &str = include_str!("../web/dist/app.css");
+
+pub(crate) async fn run_server() -> Result<()> {
+    let app = Router::new()
+        .route("/", get(root))
+        .route("/healthz", get(healthz))
+        .route("/review/{session_id}", get(review_page))
+        .route("/assets/app.js", get(app_js))
+        .route("/assets/app.css", get(app_css))
+        .route("/api/session/{session_id}/resolve/{hunk_id}/{comment_index}", get(resolve_comment))
+        .route("/api/session/{session_id}/resolve-key/{hunk_id}/{comment_key}", get(resolve_comment_by_key))
+        .route("/api/session/open", post(open_session))
+        .route("/api/session/{session_id}/state", get(session_state))
+        .route("/api/session/{session_id}/agent", post(update_agent))
+        .route("/api/session/{session_id}/hunk/{hunk_id}", get(hunk_patch))
+        .route("/api/session/{session_id}/reviewed", post(toggle_reviewed))
+        .route("/api/session/{session_id}/comment", post(update_comment))
+        .route("/api/session/{session_id}/stage", post(stage_hunk))
+        .route("/api/session/{session_id}/stage-file", post(stage_file))
+        .route("/api/session/{session_id}/stage-selection", post(stage_selection))
+        .route("/api/session/{session_id}/discard", post(discard_hunk))
+        .route("/api/session/{session_id}/unstage", post(unstage_hunk))
+        .route("/api/session/{session_id}/unstage-file", post(unstage_file))
+        .with_state(AppState {
+            inner: Arc::new(Mutex::new(ServerState::default())),
+            agent_availability: detect_agent_availability(),
+        });
+
+    let listener = tokio::net::TcpListener::bind((HOST, PORT))
+        .await
+        .with_context(|| format!("failed to bind {HOST}:{PORT}"))?;
+
+    println!("Moon Review listening on {}", crate::api::SERVER_URL);
+    axum::serve(listener, app).await.context("server failed")
+}
+
+async fn root() -> impl IntoResponse {
+    Html("<!doctype html><title>Moon Review</title><p>Open via the CLI in a git repo.</p>")
+}
+
+async fn healthz() -> &'static str {
+    "ok"
+}
+
+async fn review_page() -> Html<&'static str> {
+    Html(INDEX_HTML)
+}
+
+async fn app_js() -> impl IntoResponse {
+    (
+        [(axum::http::header::CONTENT_TYPE, "application/javascript; charset=utf-8")],
+        APP_JS,
+    )
+}
+
+async fn app_css() -> impl IntoResponse {
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/css; charset=utf-8")],
+        APP_CSS,
+    )
+}
+
+async fn open_session(
+    State(state): State<AppState>,
+    Json(request): Json<OpenSessionRequest>,
+) -> Result<Json<SessionOpened>, AppError> {
+    let repo_path = canonicalize_repo(PathBuf::from(request.repo_path))?;
+    let diff_target = request.diff_target.unwrap_or_default();
+    let session_id = crate::api::session_id_for(&repo_path, &diff_target);
+
+    let mut guard = state.inner.lock().map_err(|_| anyhow!("state lock poisoned"))?;
+    guard.sessions.insert(session_id.clone(), RepoSession {
+        repo_path,
+        diff_target,
+        comments: HashMap::new(),
+        reviewed: HashSet::new(),
+        selected_agent: AgentKind::None,
+        comment_dispatches: HashMap::new(),
+    });
+
+    Ok(Json(SessionOpened { session_id }))
+}
+
+async fn session_state(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+) -> Result<Json<SessionPayload>, AppError> {
+    let agent_availability = state.agent_availability;
+    let available_agents = agent_options(agent_availability);
+    let session = crate::api::with_session(&state, &session_id, |session| {
+        let hunks = collect_hunks(&session.repo_path, &session.diff_target)?;
+        let views = hunks
+            .into_iter()
+            .map(|hunk| {
+                let comment = session
+                    .comments
+                    .get(&hunk.id)
+                    .map(|comment| anchored_comments_only(comment))
+                    .unwrap_or_default();
+                let comment_dispatches = parse_anchored_comments(&comment)
+                    .into_iter()
+                    .map(|entry| comment_dispatch_view(session, &hunk.id, &entry))
+                    .collect::<Vec<_>>();
+
+                HunkView {
+                    reviewed: session.reviewed.contains(&hunk.id),
+                    id: hunk.id,
+                    file_path: hunk.file_path,
+                    header: hunk.header,
+                    staged: hunk.staged,
+                    comment,
+                    comment_dispatches,
+                    patch_preview: preview_patch(&hunk.patch, PATCH_PREVIEW_LINE_LIMIT),
+                    patch_line_count: hunk.patch.lines().count(),
+                }
+            })
+            .collect::<Vec<_>>();
+
+        Ok(SessionPayload {
+            repo_name: session
+                .repo_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("repo")
+                .to_string(),
+            repo_path: session.repo_path.display().to_string(),
+            read_only: session.diff_target.base.is_some(),
+            patch_preview_line_limit: PATCH_PREVIEW_LINE_LIMIT,
+            available_agents: available_agents.clone(),
+            selected_agent: session.selected_agent,
+            export_text: build_export_text(&session_id, &views),
+            hunks: views,
+        })
+    })?;
+
+    Ok(Json(session))
+}
+
+async fn update_agent(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::AgentSelectionRequest>,
+) -> Result<&'static str, AppError> {
+    crate::api::with_session(&state, &session_id, |session| {
+        if !agent_is_available(state.agent_availability, request.agent) {
+            bail!("selected agent is not available");
+        }
+        session.selected_agent = request.agent;
+        Ok(())
+    })?;
+
+    Ok("ok")
+}
+
+async fn hunk_patch(
+    AxumPath((session_id, hunk_id)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+) -> Result<Json<PatchPayload>, AppError> {
+    let (_, patch, _) = crate::api::lookup_hunk(&state, &session_id, &hunk_id)?;
+    Ok(Json(PatchPayload { patch }))
+}
+
+async fn resolve_comment(
+    AxumPath((session_id, hunk_id, comment_index)): AxumPath<(String, String, usize)>,
+    State(state): State<AppState>,
+) -> Result<&'static str, AppError> {
+    crate::api::with_session(&state, &session_id, |session| {
+        let Some(existing) = session.comments.get(&hunk_id).cloned() else {
+            bail!("comment no longer exists");
+        };
+
+        let mut anchored = parse_anchored_comments(&existing);
+        let Some(entry) = anchored.get_mut(comment_index) else {
+            bail!("comment index is out of bounds");
+        };
+        entry.resolved = true;
+
+        let next = build_anchored_comment_value(&anchored);
+        if next.trim().is_empty() {
+            session.comments.remove(&hunk_id);
+        } else {
+            session.comments.insert(hunk_id.clone(), next);
+        }
+        Ok(())
+    })?;
+
+    Ok("ok")
+}
+
+async fn resolve_comment_by_key(
+    AxumPath((session_id, hunk_id, comment_key)): AxumPath<(String, String, String)>,
+    State(state): State<AppState>,
+) -> Result<&'static str, AppError> {
+    crate::api::with_session(&state, &session_id, |session| {
+        let Some(existing) = session.comments.get(&hunk_id).cloned() else {
+            bail!("comment no longer exists");
+        };
+
+        let mut anchored = parse_anchored_comments(&existing);
+        let Some(index) = anchored
+            .iter()
+            .position(|entry| anchored_comment_key(entry) == comment_key)
+        else {
+            bail!("comment no longer exists");
+        };
+        anchored[index].resolved = true;
+
+        let next = build_anchored_comment_value(&anchored);
+        if next.trim().is_empty() {
+            session.comments.remove(&hunk_id);
+        } else {
+            session.comments.insert(hunk_id.clone(), next);
+        }
+        Ok(())
+    })?;
+
+    Ok("ok")
+}
+
+async fn toggle_reviewed(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::HunkRequest>,
+) -> Result<&'static str, AppError> {
+    crate::api::with_session(&state, &session_id, |session| {
+        if !session.reviewed.insert(request.hunk_id.clone()) {
+            session.reviewed.remove(&request.hunk_id);
+        }
+        Ok(())
+    })?;
+    Ok("ok")
+}
+
+async fn update_comment(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::CommentRequest>,
+) -> Result<&'static str, AppError> {
+    let dispatch_jobs = crate::api::with_session(&state, &session_id, |session| {
+        plan_comment_dispatches(session, &session_id, &request)
+    })?;
+
+    for job in dispatch_jobs {
+        spawn_comment_dispatch(state.clone(), job);
+    }
+
+    Ok("ok")
+}
+
+async fn stage_hunk(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::HunkRequest>,
+) -> Result<&'static str, AppError> {
+    crate::api::ensure_session_is_writable(&state, &session_id)?;
+    let (repo_path, patch, is_staged) = crate::api::lookup_hunk(&state, &session_id, &request.hunk_id)?;
+    if is_staged {
+        return Ok("ok");
+    }
+    apply_patch(&repo_path, &patch, true, false)?;
+    Ok("ok")
+}
+
+async fn unstage_hunk(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::HunkRequest>,
+) -> Result<&'static str, AppError> {
+    crate::api::ensure_session_is_writable(&state, &session_id)?;
+    let (repo_path, patch, is_staged) = crate::api::lookup_hunk(&state, &session_id, &request.hunk_id)?;
+    if !is_staged {
+        return Ok("ok");
+    }
+    apply_patch(&repo_path, &patch, true, true)?;
+    Ok("ok")
+}
+
+async fn stage_selection(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<SelectionRequest>,
+) -> Result<&'static str, AppError> {
+    crate::api::ensure_session_is_writable(&state, &session_id)?;
+    let (repo_path, patch, is_staged) = crate::api::lookup_hunk(&state, &session_id, &request.hunk_id)?;
+    if is_staged {
+        return Ok("ok");
+    }
+    let partial_patch = build_partial_patch_from_selection(&patch, &request.selection)?;
+    apply_patch(&repo_path, &partial_patch, true, false)?;
+    Ok("ok")
+}
+
+async fn stage_file(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::FileRequest>,
+) -> Result<&'static str, AppError> {
+    crate::api::ensure_session_is_writable(&state, &session_id)?;
+    let repo_path = crate::api::with_session(&state, &session_id, |session| Ok(session.repo_path.clone()))?;
+    run_git_no_output(&repo_path, &["add", "--", &request.file_path]).map_err(AppError)?;
+    Ok("ok")
+}
+
+async fn discard_hunk(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::HunkRequest>,
+) -> Result<&'static str, AppError> {
+    crate::api::ensure_session_is_writable(&state, &session_id)?;
+    let (repo_path, patch, is_staged) = crate::api::lookup_hunk(&state, &session_id, &request.hunk_id)?;
+
+    apply_patch(&repo_path, &patch, false, true)?;
+    if is_staged {
+        apply_patch(&repo_path, &patch, true, true)?;
+    }
+
+    Ok("ok")
+}
+
+async fn unstage_file(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::FileRequest>,
+) -> Result<&'static str, AppError> {
+    crate::api::ensure_session_is_writable(&state, &session_id)?;
+    let repo_path = crate::api::with_session(&state, &session_id, |session| Ok(session.repo_path.clone()))?;
+    run_git_no_output(&repo_path, &["restore", "--staged", "--", &request.file_path]).map_err(AppError)?;
+    Ok("ok")
+}

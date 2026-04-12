@@ -4,7 +4,11 @@ type HeaderProps = {
   onCopyExport: () => void;
 };
 
-export function Header({ repoPath, busy, onCopyExport }: HeaderProps) {
+export function Header({
+  repoPath,
+  busy,
+  onCopyExport,
+}: HeaderProps) {
   return (
     <header>
       <div>

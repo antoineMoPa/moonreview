@@ -8,9 +8,11 @@ import {
   stageSelection as stageSelectionRequest,
   toggleStage as toggleStageRequest,
   toggleStageFile as toggleStageFileRequest,
+  updateAgent as updateAgentRequest,
 } from "./api";
 import { parseAnchoredComments } from "./anchoredComments";
-import type { Hunk, SessionState } from "./types";
+import { COMMENT_DISPATCH_STATUS } from "./types";
+import type { AgentKind, Hunk, SessionState } from "./types";
 
 type ReviewStoreState = {
   data: SessionState | null;
@@ -28,6 +30,7 @@ type ReviewStoreValue = {
     discardHunk: (hunkId: string) => Promise<void>;
     updateDraftComment: (hunkId: string, comment: string) => void;
     saveComment: (hunkId: string, comment: string) => Promise<void>;
+    setAgent: (agent: AgentKind) => Promise<void>;
   };
 };
 
@@ -118,18 +121,38 @@ function initialReviewStoreState(): ReviewStoreState {
   };
 }
 
+function hasActiveDispatches(data: SessionState | null): boolean {
+  if (!data) {
+    return false;
+  }
+
+  return data.hunks.some((hunk) =>
+    hunk.comment_dispatches.some(
+      (dispatch) =>
+        dispatch.status === COMMENT_DISPATCH_STATUS.queued ||
+        dispatch.status === COMMENT_DISPATCH_STATUS.running,
+    ),
+  );
+}
+
 export function ReviewStoreProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(reviewStoreReducer, undefined, initialReviewStoreState);
 
-  async function loadState() {
+  async function loadStateInternal(showErrorToast: boolean) {
     try {
       const data = await fetchSessionState();
       dispatch({ type: "state_loaded", data });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load state.";
       dispatch({ type: "load_failed", message });
-      toast.error(message);
+      if (showErrorToast) {
+        toast.error(message);
+      }
     }
+  }
+
+  async function loadState() {
+    await loadStateInternal(true);
   }
 
   async function mutate(request: () => Promise<unknown>) {
@@ -156,6 +179,18 @@ export function ReviewStoreProvider({ children }: { children: React.ReactNode })
     void loadState();
   }, []);
 
+  useEffect(() => {
+    if (!hasActiveDispatches(state.data)) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      void loadStateInternal(false);
+    }, 1500);
+
+    return () => window.clearInterval(timer);
+  }, [state.data]);
+
   const value = useMemo<ReviewStoreValue>(
     () => ({
       state,
@@ -167,6 +202,7 @@ export function ReviewStoreProvider({ children }: { children: React.ReactNode })
         discardHunk: async (hunkId) => mutate(() => discardHunkRequest(hunkId)),
         updateDraftComment,
         saveComment: async (hunkId, comment) => mutate(() => saveCommentRequest(hunkId, comment)),
+        setAgent: async (agent) => mutate(() => updateAgentRequest(agent)),
       },
     }),
     [state],

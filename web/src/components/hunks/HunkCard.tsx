@@ -8,8 +8,9 @@ import {
   type AnchoredComment,
 } from "../../anchoredComments";
 import { useReviewStore } from "../../reviewStore";
-import type { Hunk } from "../../types";
+import type { AgentKind, AgentOption, Hunk } from "../../types";
 import { splitDiffIntoSegments } from "./diffSegments";
+import { InlineCommentCard } from "./InlineCommentCard";
 import { LineActions } from "./LineActions";
 import { SelectionComposer } from "./SelectionComposer";
 
@@ -17,6 +18,9 @@ hljs.registerLanguage("diff", diff);
 
 type HunkCardProps = {
   hunk: Hunk;
+  agents: AgentOption[];
+  selectedAgent: AgentKind;
+  onAgentChange: (agent: AgentKind) => void;
 };
 
 function selectionLivesWithin(container: Node, selection: Selection): boolean {
@@ -69,7 +73,7 @@ function HighlightedCode({
   );
 }
 
-export function HunkCard({ hunk }: HunkCardProps) {
+export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCardProps) {
   const {
     state: { data },
     actions,
@@ -174,6 +178,14 @@ export function HunkCard({ hunk }: HunkCardProps) {
     setComposerOpen(false);
     setSelectionPosition(null);
     setLockedSelectionPosition(null);
+  }
+
+  function closeSelectionComposer() {
+    if (selectionNote.trim() && !window.confirm("Discard this comment?")) {
+      return;
+    }
+
+    clearSelectionUi();
   }
 
   function addAnchoredComment() {
@@ -287,9 +299,12 @@ export function HunkCard({ hunk }: HunkCardProps) {
         <SelectionComposer
           selectedText={lockedSelectedText}
           note={selectionNote}
+          agents={agents}
+          selectedAgent={selectedAgent}
           onNoteChange={setSelectionNote}
+          onAgentChange={onAgentChange}
           onAdd={addAnchoredComment}
-          onClear={clearSelectionUi}
+          onClear={closeSelectionComposer}
           style={{ top: lockedSelectionPosition.top + 36, left: lockedSelectionPosition.left }}
         />
       ) : null}
@@ -305,36 +320,21 @@ export function HunkCard({ hunk }: HunkCardProps) {
                 onSelection={captureSelection}
               />
             ) : (
-              <div className="inline-comment-card" key={`comment-${index}`}>
-                <div className="inline-comment-head">
-                  <div className={`inline-comment-label ${segment.resolved ? "resolved" : ""}`.trim()}>
-                    {segment.resolved ? "Resolved" : "Comment"}
-                  </div>
-                  <div className="toolbar">
-                    <button onClick={() => toggleCommentResolved(segment.index)}>
-                      {segment.resolved ? "Reopen" : "Resolve"}
-                    </button>
-                    {editingCommentIndex === segment.index ? (
-                      <button onClick={() => saveEditedComment(segment.index)}>Save</button>
-                    ) : (
-                      <button onClick={() => startEditingComment(segment.index)}>Edit</button>
-                    )}
-                    <button onClick={() => deleteComment(segment.index)}>Delete</button>
-                  </div>
-                </div>
-                <pre className="selection-preview">{segment.selection}</pre>
-                {editingCommentIndex === segment.index ? (
-                  <textarea
-                    value={editingCommentValue}
-                    onChange={(event) => setEditingCommentValue(event.target.value)}
-                    spellCheck={false}
-                  />
-                ) : (
-                  <div className={`inline-comment-body ${segment.resolved ? "resolved" : ""}`.trim()}>
-                    {segment.comment}
-                  </div>
-                )}
-              </div>
+              <InlineCommentCard
+                key={`comment-${index}`}
+                agents={agents}
+                selectedAgent={selectedAgent}
+                segment={segment}
+                dispatch={hunk.comment_dispatches[segment.index]}
+                editing={editingCommentIndex === segment.index}
+                editingCommentValue={editingCommentValue}
+                onAgentChange={onAgentChange}
+                onToggleResolved={toggleCommentResolved}
+                onStartEditing={startEditingComment}
+                onSave={saveEditedComment}
+                onDelete={deleteComment}
+                onEditingCommentValueChange={setEditingCommentValue}
+              />
             ),
           )}
         </div>

@@ -1,4 +1,4 @@
-import type { PatchPayload, SessionState } from "./types";
+import type { AgentKind, PatchPayload, SessionState } from "./types";
 
 const sessionId = window.location.pathname.split("/").pop() ?? "";
 
@@ -69,5 +69,12 @@ export function saveComment(hunkId: string, comment: string): Promise<string> {
   return request<string>(`/api/session/${sessionId}/comment`, {
     method: "POST",
     body: JSON.stringify({ hunk_id: hunkId, comment }),
+  });
+}
+
+export function updateAgent(agent: AgentKind): Promise<string> {
+  return request<string>(`/api/session/${sessionId}/agent`, {
+    method: "POST",
+    body: JSON.stringify({ agent }),
   });
 }
