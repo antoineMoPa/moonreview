@@ -4,7 +4,7 @@ The missing local code review step when working with AI agents.
 
 ![Moon Review Screenshot](screenshot.gif)
 
-Tiny local code review UI for git.
+moonreview is a tiny local code review UI for git.
 
 It shows git hunks, lets you comment, stage or unstage them individually, and collect notes in one big copy-pasteable review block for efficient copy pasting in your favourite AI tool.
 
