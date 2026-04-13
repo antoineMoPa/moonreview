@@ -23,6 +23,8 @@ Run `moonreview` inside any git repository you want to review.
 pkill moonreview
 ```
 
+There is also a timeout after 30 minutes.
+
 ## Development
 
 I usually use this as part of my debug loop:
