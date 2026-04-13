@@ -7,6 +7,7 @@ import { AgentSelect } from "../AgentSelect";
 type InlineCommentSegment = Extract<DiffSegment, { type: "comment" }>;
 
 type InlineCommentCardProps = {
+  id?: string;
   agents: AgentOption[];
   selectedAgent: AgentKind;
   segment: InlineCommentSegment;
@@ -24,6 +25,7 @@ type InlineCommentCardProps = {
 const HIDDEN_DISPATCH_STATUS = COMMENT_DISPATCH_STATUS.idle;
 
 export function InlineCommentCard({
+  id,
   agents,
   selectedAgent,
   segment,
@@ -41,7 +43,7 @@ export function InlineCommentCard({
   const showDispatch = dispatch && dispatch.status !== HIDDEN_DISPATCH_STATUS;
 
   return (
-    <div className="inline-comment-card">
+    <div id={id} className="inline-comment-card">
       <div className="inline-comment-head">
         <div className={`inline-comment-label ${resolvedClassName}`.trim()}>
           {segment.resolved ? "Resolved" : "Comment"}

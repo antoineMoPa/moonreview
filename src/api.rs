@@ -31,6 +31,7 @@ pub(crate) struct RepoSession {
     pub(crate) repo_path: PathBuf,
     pub(crate) diff_target: DiffTarget,
     pub(crate) comments: HashMap<String, String>,
+    pub(crate) comment_contexts: HashMap<String, HunkCommentContext>,
     pub(crate) reviewed: HashSet<String>,
     pub(crate) selected_agent: AgentKind,
     pub(crate) comment_dispatches: HashMap<String, CommentDispatchState>,
@@ -56,6 +57,7 @@ pub(crate) struct SessionPayload {
     pub(crate) available_agents: Vec<AgentOption>,
     pub(crate) selected_agent: AgentKind,
     pub(crate) hunks: Vec<HunkView>,
+    pub(crate) sidebar_comments: Vec<SidebarCommentView>,
     pub(crate) export_text: String,
 }
 
@@ -70,6 +72,25 @@ pub(crate) struct HunkView {
     pub(crate) comment_dispatches: Vec<CommentDispatchView>,
     pub(crate) patch_preview: String,
     pub(crate) patch_line_count: usize,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct HunkCommentContext {
+    pub(crate) file_path: String,
+    pub(crate) header: String,
+}
+
+#[derive(Serialize)]
+pub(crate) struct SidebarCommentView {
+    pub(crate) hunk_id: String,
+    pub(crate) comment_index: usize,
+    pub(crate) file_path: String,
+    pub(crate) header: String,
+    pub(crate) selection: String,
+    pub(crate) comment: String,
+    pub(crate) resolved: bool,
+    pub(crate) dispatch_status: CommentDispatchStatus,
+    pub(crate) jumpable: bool,
 }
 
 #[derive(Clone, Copy, Default, Serialize)]

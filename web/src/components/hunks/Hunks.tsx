@@ -8,6 +8,8 @@ type HunksProps = {
   agents: AgentOption[];
   selectedAgent: AgentKind;
   onAgentChange: (agent: AgentKind) => void;
+  targetFilePath?: string | null;
+  targetHunkId?: string | null;
 };
 
 type FileGroup = {
@@ -35,31 +37,32 @@ function FileAccordion({
   agents,
   selectedAgent,
   onAgentChange,
-  defaultOpen,
+  open,
+  onOpenChange,
 }: {
   filePath: string;
   hunks: Hunk[];
   agents: AgentOption[];
   selectedAgent: AgentKind;
   onAgentChange: (agent: AgentKind) => void;
-  defaultOpen: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
   const {
     state: { data },
     actions,
   } = useReviewStore();
-  const [open, setOpen] = useState(defaultOpen);
   const staged = hunks[0]?.staged ?? false;
   const readOnly = data?.read_only ?? false;
 
   return (
-    <div className="file-accordion">
+    <div id={`file-${encodeURIComponent(filePath)}`} className="file-accordion">
       <div className="file-accordion-head">
-        <button className="file-accordion-toggle" onClick={() => setOpen((value) => !value)}>
+        <button className="file-accordion-toggle" onClick={() => onOpenChange(!open)}>
           <span>{filePath}</span>
         </button>
         <span className="file-accordion-meta">
-          <span className={`badge ${staged ? "staged" : ""}`.trim()}>{staged ? "Staged" : "Unstaged"}</span>
+          <span className={`badge ${staged ? "staged" : "unstaged"}`.trim()}>{staged ? "Staged" : "Unstaged"}</span>
           <span className="muted">{hunks.length}</span>
           {!readOnly ? (
             <button onClick={() => void actions.toggleStageFile(filePath, staged)}>
@@ -83,15 +86,84 @@ function FileAccordion({
   );
 }
 
-export function Hunks({ hunks, agents, selectedAgent, onAgentChange }: HunksProps) {
+export function Hunks({
+  hunks,
+  agents,
+  selectedAgent,
+  onAgentChange,
+  targetFilePath,
+  targetHunkId,
+}: HunksProps) {
   const [unstagedOpen, setUnstagedOpen] = useState(true);
   const [stagedOpen, setStagedOpen] = useState(false);
+  const [openFiles, setOpenFiles] = useState<Record<string, boolean>>({});
   const unstagedGroups = useMemo(() => groupByFile(hunks.filter((hunk) => !hunk.staged)), [hunks]);
   const stagedGroups = useMemo(() => groupByFile(hunks.filter((hunk) => hunk.staged)), [hunks]);
+  const hunkTargets = useMemo(
+    () =>
+      new Map(
+        hunks.map((hunk) => [
+          hunk.id,
+          {
+            filePath: hunk.file_path,
+            staged: hunk.staged,
+          },
+        ]),
+      ),
+    [hunks],
+  );
 
   useEffect(() => {
     setStagedOpen(false);
   }, [stagedGroups.length]);
+
+  useEffect(() => {
+    setOpenFiles((current) => {
+      const next = { ...current };
+      let changed = false;
+      for (const group of unstagedGroups) {
+        if (!(group.filePath in next)) {
+          next[group.filePath] = true;
+          changed = true;
+        }
+      }
+      for (const group of stagedGroups) {
+        if (!(group.filePath in next)) {
+          next[group.filePath] = false;
+          changed = true;
+        }
+      }
+
+      return changed ? next : current;
+    });
+  }, [stagedGroups, unstagedGroups]);
+
+  useEffect(() => {
+    const target = targetHunkId ? hunkTargets.get(targetHunkId) : null;
+    const nextFilePath = target?.filePath ?? targetFilePath;
+    if (!nextFilePath) {
+      return;
+    }
+
+    setOpenFiles((current) => ({ ...current, [nextFilePath]: true }));
+    if (target) {
+      if (target.staged) {
+        setStagedOpen(true);
+      } else {
+        setUnstagedOpen(true);
+      }
+      return;
+    }
+
+    const fileGroup = hunks.find((hunk) => hunk.file_path === nextFilePath);
+    if (fileGroup) {
+      if (fileGroup.staged) {
+        setStagedOpen(true);
+      } else {
+        setUnstagedOpen(true);
+      }
+    }
+  }, [hunkTargets, hunks, targetFilePath, targetHunkId]);
 
   return (
     <div className="hunk-sections">
@@ -110,7 +182,10 @@ export function Hunks({ hunks, agents, selectedAgent, onAgentChange }: HunksProp
                 agents={agents}
                 selectedAgent={selectedAgent}
                 onAgentChange={onAgentChange}
-                defaultOpen={true}
+                open={openFiles[group.filePath] ?? true}
+                onOpenChange={(open) =>
+                  setOpenFiles((current) => ({ ...current, [group.filePath]: open }))
+                }
               />
             ))
           ) : (
@@ -134,7 +209,10 @@ export function Hunks({ hunks, agents, selectedAgent, onAgentChange }: HunksProp
                 agents={agents}
                 selectedAgent={selectedAgent}
                 onAgentChange={onAgentChange}
-                defaultOpen={false}
+                open={openFiles[group.filePath] ?? false}
+                onOpenChange={(open) =>
+                  setOpenFiles((current) => ({ ...current, [group.filePath]: open }))
+                }
               />
             ))
           ) : (

@@ -35,6 +35,18 @@ export type Hunk = {
   patch_line_count: number;
 };
 
+export type SidebarComment = {
+  hunk_id: string;
+  comment_index: number;
+  file_path: string;
+  header: string;
+  selection: string;
+  comment: string;
+  resolved: boolean;
+  dispatch_status: CommentDispatchStatus;
+  jumpable: boolean;
+};
+
 export type SessionState = {
   repo_name: string;
   repo_path: string;
@@ -43,6 +55,7 @@ export type SessionState = {
   available_agents: AgentOption[];
   selected_agent: AgentKind;
   hunks: Hunk[];
+  sidebar_comments: SidebarComment[];
   export_text: string;
 };
 

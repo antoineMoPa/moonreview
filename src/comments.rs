@@ -6,7 +6,8 @@ use crate::{
     agent::run_agent_dispatch,
     api::{
         AgentKind, AppState, CommentDispatchStatus, CommentDispatchView, CommentRequest, DiffHunk,
-        EXPORT_SERVER_URL, HunkView, RepoSession, SERVER_URL, with_session,
+        EXPORT_SERVER_URL, HunkCommentContext, HunkView, RepoSession, SERVER_URL,
+        SidebarCommentView, with_session,
     },
     git::collect_hunks,
 };
@@ -249,6 +250,60 @@ pub(crate) fn build_export_text(session_id: &str, hunks: &[HunkView]) -> String 
     out
 }
 
+pub(crate) fn build_sidebar_comments(
+    session: &RepoSession,
+    current_hunks: &[HunkView],
+) -> Vec<SidebarCommentView> {
+    let mut sidebar_comments = Vec::new();
+    let mut seen_hunks = HashSet::new();
+
+    for hunk in current_hunks {
+        seen_hunks.insert(hunk.id.clone());
+        let anchored = parse_anchored_comments(&hunk.comment);
+        for (comment_index, entry) in anchored.into_iter().enumerate() {
+            let dispatch = comment_dispatch_view(session, &hunk.id, &entry);
+            sidebar_comments.push(SidebarCommentView {
+                hunk_id: hunk.id.clone(),
+                comment_index,
+                file_path: hunk.file_path.clone(),
+                header: hunk.header.clone(),
+                selection: entry.selection.clone(),
+                comment: entry.comment.clone(),
+                resolved: entry.resolved,
+                dispatch_status: dispatch.status,
+                jumpable: true,
+            });
+        }
+    }
+
+    for (hunk_id, stored_comment) in &session.comments {
+        if seen_hunks.contains(hunk_id) {
+            continue;
+        }
+
+        let Some(context) = session.comment_contexts.get(hunk_id) else {
+            continue;
+        };
+        let anchored = parse_anchored_comments(stored_comment);
+        for (comment_index, entry) in anchored.into_iter().enumerate() {
+            let dispatch = comment_dispatch_view(session, hunk_id, &entry);
+            sidebar_comments.push(SidebarCommentView {
+                hunk_id: hunk_id.clone(),
+                comment_index,
+                file_path: context.file_path.clone(),
+                header: context.header.clone(),
+                selection: entry.selection.clone(),
+                comment: entry.comment.clone(),
+                resolved: entry.resolved,
+                dispatch_status: dispatch.status,
+                jumpable: false,
+            });
+        }
+    }
+
+    sidebar_comments
+}
+
 pub(crate) fn plan_comment_dispatches(
     session: &mut RepoSession,
     session_id: &str,
@@ -279,10 +334,12 @@ pub(crate) fn plan_comment_dispatches(
 fn apply_comment_update(session: &mut RepoSession, request: &CommentRequest) -> CommentUpdate {
     let previous_comment = session.comments.get(&request.hunk_id).cloned().unwrap_or_default();
     let previous_anchored = parse_anchored_comments(&previous_comment);
+    remember_hunk_context(session, &request.hunk_id);
 
     let next_comment = anchored_comments_only(&request.comment);
     if next_comment.trim().is_empty() {
         session.comments.remove(&request.hunk_id);
+        session.comment_contexts.remove(&request.hunk_id);
     } else {
         session.comments.insert(request.hunk_id.clone(), next_comment);
     }
@@ -295,6 +352,22 @@ fn apply_comment_update(session: &mut RepoSession, request: &CommentRequest) -> 
         previous_anchored,
         next_anchored,
     }
+}
+
+fn remember_hunk_context(session: &mut RepoSession, hunk_id: &str) {
+    let Ok(Some(hunk)) = collect_hunks(&session.repo_path, &session.diff_target)
+        .map(|hunks| hunks.into_iter().find(|hunk| hunk.id == hunk_id))
+    else {
+        return;
+    };
+
+    session.comment_contexts.insert(
+        hunk_id.to_string(),
+        HunkCommentContext {
+            file_path: hunk.file_path,
+            header: hunk.header,
+        },
+    );
 }
 
 fn should_dispatch_comments(session: &RepoSession, update: &CommentUpdate) -> bool {

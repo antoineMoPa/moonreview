@@ -299,7 +299,7 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
   }
 
   return (
-    <article className="panel hunk" ref={hunkRef}>
+    <article id={`hunk-${hunk.id}`} className="panel hunk" ref={hunkRef}>
       <div className="hunk-actions">
         {!readOnly ? (
           <>
@@ -362,6 +362,7 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
             ) : (
               <InlineCommentCard
                 key={`comment-${index}`}
+                id={`comment-${hunk.id}-${segment.index}`}
                 agents={agents}
                 selectedAgent={selectedAgent}
                 segment={segment}

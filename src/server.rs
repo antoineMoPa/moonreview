@@ -2,6 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -19,7 +20,7 @@ use crate::{
     },
     comments::{
         anchored_comment_key, anchored_comments_only, build_anchored_comment_value, build_export_text,
-        comment_dispatch_view, parse_anchored_comments, plan_comment_dispatches,
+        build_sidebar_comments, comment_dispatch_view, parse_anchored_comments, plan_comment_dispatches,
         spawn_comment_dispatch,
     },
     git::{
@@ -29,6 +30,7 @@ use crate::{
 };
 
 const PATCH_PREVIEW_LINE_LIMIT: usize = 100;
+const SERVER_LIFETIME: Duration = Duration::from_secs(30 * 60);
 const INDEX_HTML: &str = include_str!("index.html");
 const APP_JS: &str = include_str!("../web/dist/app.js");
 const APP_CSS: &str = include_str!("../web/dist/app.css");
@@ -64,7 +66,29 @@ pub(crate) async fn run_server() -> Result<()> {
         .with_context(|| format!("failed to bind {HOST}:{PORT}"))?;
 
     println!("Moon Review listening on {}", crate::api::SERVER_URL);
-    axum::serve(listener, app).await.context("server failed")
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .context("server failed")
+}
+
+async fn shutdown_signal() {
+    let timeout = tokio::time::sleep(SERVER_LIFETIME);
+    tokio::pin!(timeout);
+
+    tokio::select! {
+        _ = &mut timeout => {
+            eprintln!(
+                "[moonreview] shutting down after {} minutes",
+                SERVER_LIFETIME.as_secs() / 60
+            );
+        }
+        result = tokio::signal::ctrl_c() => {
+            if let Err(error) = result {
+                eprintln!("[moonreview] failed to listen for shutdown signal: {error}");
+            }
+        }
+    }
 }
 
 async fn root() -> impl IntoResponse {
@@ -102,14 +126,23 @@ async fn open_session(
     let session_id = crate::api::session_id_for(&repo_path, &diff_target);
 
     let mut guard = state.inner.lock().map_err(|_| anyhow!("state lock poisoned"))?;
-    guard.sessions.insert(session_id.clone(), RepoSession {
-        repo_path,
-        diff_target,
-        comments: HashMap::new(),
-        reviewed: HashSet::new(),
-        selected_agent: AgentKind::None,
-        comment_dispatches: HashMap::new(),
-    });
+    match guard.sessions.get_mut(&session_id) {
+        Some(session) => {
+            session.repo_path = repo_path;
+            session.diff_target = diff_target;
+        }
+        None => {
+            guard.sessions.insert(session_id.clone(), RepoSession {
+                repo_path,
+                diff_target,
+                comments: HashMap::new(),
+                comment_contexts: HashMap::new(),
+                reviewed: HashSet::new(),
+                selected_agent: AgentKind::None,
+                comment_dispatches: HashMap::new(),
+            });
+        }
+    }
 
     Ok(Json(SessionOpened { session_id }))
 }
@@ -161,6 +194,7 @@ async fn session_state(
             patch_preview_line_limit: PATCH_PREVIEW_LINE_LIMIT,
             available_agents: available_agents.clone(),
             selected_agent: session.selected_agent,
+            sidebar_comments: build_sidebar_comments(session, &views),
             export_text: build_export_text(&session_id, &views),
             hunks: views,
         })

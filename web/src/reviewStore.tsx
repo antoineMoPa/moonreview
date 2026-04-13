@@ -126,12 +126,19 @@ function hasActiveDispatches(data: SessionState | null): boolean {
     return false;
   }
 
-  return data.hunks.some((hunk) =>
-    hunk.comment_dispatches.some(
-      (dispatch) =>
-        dispatch.status === COMMENT_DISPATCH_STATUS.queued ||
-        dispatch.status === COMMENT_DISPATCH_STATUS.running,
-    ),
+  return (
+    data.hunks.some((hunk) =>
+      hunk.comment_dispatches.some(
+        (dispatch) =>
+          dispatch.status === COMMENT_DISPATCH_STATUS.queued ||
+          dispatch.status === COMMENT_DISPATCH_STATUS.running,
+      ),
+    ) ||
+    data.sidebar_comments.some(
+      (comment) =>
+        comment.dispatch_status === COMMENT_DISPATCH_STATUS.queued ||
+        comment.dispatch_status === COMMENT_DISPATCH_STATUS.running,
+    )
   );
 }
 
