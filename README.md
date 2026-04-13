@@ -2,7 +2,7 @@
 
 The missing local code review step when working with AI agents.
 
-![Moon Review Screenshot](screenshot.webp)
+![Moon Review Screenshot](screenshot.gif)
 
 Tiny local code review UI for git.
 
