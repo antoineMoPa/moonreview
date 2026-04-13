@@ -8,6 +8,10 @@ moonreview is a tiny local code review UI for git.
 
 It shows git hunks, lets you comment, stage or unstage them individually. Comments can either be sent to your local claude or codex (using your currently signed-in account) or collected in one big review text for copy pasting in your favourite AI tool.
 
+## Requirements
+
+- [Rust](https://www.rust-lang.org/tools/install)
+
 ## Installation / Usage
 
 ```bash
@@ -31,6 +35,17 @@ I usually use this as part of my debug loop:
 
 ```bash
 pkill moon;  cargo install --path . ; moonreview
+```
+
+## Troubleshooting
+
+### `moonreview: command not found` after installing
+
+`~/.cargo/bin` may not be in your PATH. Add it to your shell config (e.g. `~/.zshrc`):
+
+```bash
+echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
 ```
 
 ## Origin of name
