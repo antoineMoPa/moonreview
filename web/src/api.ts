@@ -2,14 +2,30 @@ import type { AgentKind, PatchPayload, SessionState } from "./types";
 
 const sessionId = window.location.pathname.split("/").pop() ?? "";
 
+export class ApiError extends Error {
+  readonly isTimeout: boolean;
+
+  constructor(message: string, options?: { isTimeout?: boolean }) {
+    super(message);
+    this.name = "ApiError";
+    this.isTimeout = options?.isTimeout ?? false;
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
-    headers: { "content-type": "application/json" },
-    ...init,
-  });
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      headers: { "content-type": "application/json" },
+      ...init,
+    });
+  } catch (error) {
+    throw new ApiError("Server probably went to sleep; launch moonreview again.", { isTimeout: true });
+  }
+
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Request failed: ${response.status}`);
+    throw new ApiError(text || `Request failed: ${response.status}`);
   }
   const contentType = response.headers.get("content-type") || "";
   if (contentType.includes("application/json")) {

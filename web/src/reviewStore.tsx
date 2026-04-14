@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useReducer } from "react";
 import { toast } from "sonner";
-import { getSessionId } from "./api";
+import { ApiError, getSessionId } from "./api";
 import {
   discardHunk as discardHunkRequest,
   fetchSessionState,
@@ -18,6 +18,8 @@ type ReviewStoreState = {
   data: SessionState | null;
   loadError: string;
   busy: boolean;
+  pollingStopped: boolean;
+  timeoutToastShown: boolean;
 };
 
 type ReviewStoreValue = {
@@ -39,6 +41,8 @@ type ReviewStoreAction =
   | { type: "request_finished" }
   | { type: "state_loaded"; data: SessionState }
   | { type: "load_failed"; message: string }
+  | { type: "polling_stopped"; message: string }
+  | { type: "timeout_toast_shown" }
   | { type: "draft_comment_updated"; hunkId: string; comment: string };
 
 const ReviewStoreContext = createContext<ReviewStoreValue | null>(null);
@@ -94,11 +98,24 @@ function reviewStoreReducer(state: ReviewStoreState, action: ReviewStoreAction):
         ...state,
         data: action.data,
         loadError: "",
+        pollingStopped: false,
+        timeoutToastShown: false,
       };
     case "load_failed":
       return {
         ...state,
         loadError: action.message,
+      };
+    case "polling_stopped":
+      return {
+        ...state,
+        loadError: action.message,
+        pollingStopped: true,
+      };
+    case "timeout_toast_shown":
+      return {
+        ...state,
+        timeoutToastShown: true,
       };
     case "draft_comment_updated":
       if (!state.data) {
@@ -118,7 +135,13 @@ function initialReviewStoreState(): ReviewStoreState {
     data: null,
     loadError: "",
     busy: false,
+    pollingStopped: false,
+    timeoutToastShown: false,
   };
+}
+
+function isTimeoutError(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.isTimeout;
 }
 
 function hasActiveDispatches(data: SessionState | null): boolean {
@@ -151,6 +174,15 @@ export function ReviewStoreProvider({ children }: { children: React.ReactNode })
       dispatch({ type: "state_loaded", data });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load state.";
+      if (isTimeoutError(error)) {
+        dispatch({ type: "polling_stopped", message });
+        if (showErrorToast && !state.timeoutToastShown) {
+          toast.error(message, { id: "server-timeout" });
+          dispatch({ type: "timeout_toast_shown" });
+        }
+        return;
+      }
+
       dispatch({ type: "load_failed", message });
       if (showErrorToast) {
         toast.error(message);
@@ -187,7 +219,7 @@ export function ReviewStoreProvider({ children }: { children: React.ReactNode })
   }, []);
 
   useEffect(() => {
-    if (!hasActiveDispatches(state.data)) {
+    if (state.pollingStopped || !hasActiveDispatches(state.data)) {
       return;
     }
 
@@ -196,7 +228,7 @@ export function ReviewStoreProvider({ children }: { children: React.ReactNode })
     }, 1500);
 
     return () => window.clearInterval(timer);
-  }, [state.data]);
+  }, [state.data, state.pollingStopped]);
 
   const value = useMemo<ReviewStoreValue>(
     () => ({
