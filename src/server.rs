@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -15,35 +15,61 @@ use axum::{
 
 use crate::{
     api::{
-        AgentKind, AppError, AppState, HunkView, PatchPayload, RepoSession, SelectionRequest,
-        ServerState, SessionOpened, SessionPayload, HOST, OpenSessionRequest, PORT,
+        AgentKind, AppError, AppState, HOST, HunkView, OpenSessionRequest, PORT, PatchPayload,
+        RepoSession, SelectionRequest, ServerState, SessionOpened, SessionPayload,
     },
     comments::{
-        anchored_comment_key, anchored_comments_only, build_anchored_comment_value, build_export_text,
-        build_sidebar_comments, comment_dispatch_view, parse_anchored_comments, plan_comment_dispatches,
-        spawn_comment_dispatch,
+        anchored_comment_key, anchored_comments_only, build_anchored_comment_value,
+        build_export_text, build_sidebar_comments, comment_dispatch_view, parse_anchored_comments,
+        plan_comment_dispatches, spawn_comment_dispatch,
     },
     git::{
         agent_is_available, agent_options, apply_patch, build_partial_patch_from_selection,
-        canonicalize_repo, collect_hunks, detect_agent_availability, preview_patch, run_git_no_output,
+        canonicalize_repo, collect_hunks, detect_agent_availability, preview_patch,
+        run_git_no_output,
     },
 };
 
-const PATCH_PREVIEW_LINE_LIMIT: usize = 100;
+const PATCH_PREVIEW_LINE_LIMIT: usize = 500;
 const SERVER_LIFETIME: Duration = Duration::from_secs(30 * 60);
 const INDEX_HTML: &str = include_str!("index.html");
 const APP_JS: &str = include_str!("../web/dist/app.js");
 const APP_CSS: &str = include_str!("../web/dist/app.css");
 
+fn diff_line_stats(patch: &str) -> (usize, usize) {
+    let mut added = 0usize;
+    let mut removed = 0usize;
+
+    for line in patch.lines() {
+        if line.starts_with("+++") || line.starts_with("---") {
+            continue;
+        }
+        if line.starts_with('+') {
+            added += 1;
+        } else if line.starts_with('-') {
+            removed += 1;
+        }
+    }
+
+    (added, removed)
+}
+
 pub(crate) async fn run_server() -> Result<()> {
+    let last_activity = Arc::new(Mutex::new(Instant::now()));
     let app = Router::new()
         .route("/", get(root))
         .route("/healthz", get(healthz))
         .route("/review/{session_id}", get(review_page))
         .route("/assets/app.js", get(app_js))
         .route("/assets/app.css", get(app_css))
-        .route("/api/session/{session_id}/resolve/{hunk_id}/{comment_index}", get(resolve_comment))
-        .route("/api/session/{session_id}/resolve-key/{hunk_id}/{comment_key}", get(resolve_comment_by_key))
+        .route(
+            "/api/session/{session_id}/resolve/{hunk_id}/{comment_index}",
+            get(resolve_comment),
+        )
+        .route(
+            "/api/session/{session_id}/resolve-key/{hunk_id}/{comment_key}",
+            get(resolve_comment_by_key),
+        )
         .route("/api/session/open", post(open_session))
         .route("/api/session/{session_id}/state", get(session_state))
         .route("/api/session/{session_id}/agent", post(update_agent))
@@ -52,13 +78,17 @@ pub(crate) async fn run_server() -> Result<()> {
         .route("/api/session/{session_id}/comment", post(update_comment))
         .route("/api/session/{session_id}/stage", post(stage_hunk))
         .route("/api/session/{session_id}/stage-file", post(stage_file))
-        .route("/api/session/{session_id}/stage-selection", post(stage_selection))
+        .route(
+            "/api/session/{session_id}/stage-selection",
+            post(stage_selection),
+        )
         .route("/api/session/{session_id}/discard", post(discard_hunk))
         .route("/api/session/{session_id}/unstage", post(unstage_hunk))
         .route("/api/session/{session_id}/unstage-file", post(unstage_file))
         .with_state(AppState {
             inner: Arc::new(Mutex::new(ServerState::default())),
             agent_availability: detect_agent_availability(),
+            last_activity: Arc::clone(&last_activity),
         });
 
     let listener = tokio::net::TcpListener::bind((HOST, PORT))
@@ -67,50 +97,79 @@ pub(crate) async fn run_server() -> Result<()> {
 
     println!("Moon Review listening on {}", crate::api::SERVER_URL);
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(shutdown_signal(last_activity))
         .await
         .context("server failed")
 }
 
-async fn shutdown_signal() {
-    let timeout = tokio::time::sleep(SERVER_LIFETIME);
-    tokio::pin!(timeout);
+async fn shutdown_signal(last_activity: Arc<Mutex<Instant>>) {
+    loop {
+        let idle_for = last_activity
+            .lock()
+            .map(|value| value.elapsed())
+            .unwrap_or(SERVER_LIFETIME);
+        let remaining = SERVER_LIFETIME.saturating_sub(idle_for);
+        let timeout = tokio::time::sleep(remaining);
+        tokio::pin!(timeout);
 
-    tokio::select! {
-        _ = &mut timeout => {
-            eprintln!(
-                "[moonreview] shutting down after {} minutes",
-                SERVER_LIFETIME.as_secs() / 60
-            );
-        }
-        result = tokio::signal::ctrl_c() => {
-            if let Err(error) = result {
-                eprintln!("[moonreview] failed to listen for shutdown signal: {error}");
+        tokio::select! {
+            _ = &mut timeout => {
+                let idle_for = last_activity
+                    .lock()
+                    .map(|value| value.elapsed())
+                    .unwrap_or(SERVER_LIFETIME);
+                if idle_for >= SERVER_LIFETIME {
+                    eprintln!(
+                        "[moonreview] shutting down after {} minutes of inactivity",
+                        SERVER_LIFETIME.as_secs() / 60
+                    );
+                    return;
+                }
+            }
+            result = tokio::signal::ctrl_c() => {
+                if let Err(error) = result {
+                    eprintln!("[moonreview] failed to listen for shutdown signal: {error}");
+                }
+                return;
             }
         }
     }
 }
 
-async fn root() -> impl IntoResponse {
+fn mark_activity(state: &AppState) {
+    if let Ok(mut last_activity) = state.last_activity.lock() {
+        *last_activity = Instant::now();
+    }
+}
+
+async fn root(State(state): State<AppState>) -> impl IntoResponse {
+    mark_activity(&state);
     Html("<!doctype html><title>Moon Review</title><p>Open via the CLI in a git repo.</p>")
 }
 
-async fn healthz() -> &'static str {
+async fn healthz(State(state): State<AppState>) -> &'static str {
+    mark_activity(&state);
     "ok"
 }
 
-async fn review_page() -> Html<&'static str> {
+async fn review_page(State(state): State<AppState>) -> Html<&'static str> {
+    mark_activity(&state);
     Html(INDEX_HTML)
 }
 
-async fn app_js() -> impl IntoResponse {
+async fn app_js(State(state): State<AppState>) -> impl IntoResponse {
+    mark_activity(&state);
     (
-        [(axum::http::header::CONTENT_TYPE, "application/javascript; charset=utf-8")],
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "application/javascript; charset=utf-8",
+        )],
         APP_JS,
     )
 }
 
-async fn app_css() -> impl IntoResponse {
+async fn app_css(State(state): State<AppState>) -> impl IntoResponse {
+    mark_activity(&state);
     (
         [(axum::http::header::CONTENT_TYPE, "text/css; charset=utf-8")],
         APP_CSS,
@@ -121,26 +180,33 @@ async fn open_session(
     State(state): State<AppState>,
     Json(request): Json<OpenSessionRequest>,
 ) -> Result<Json<SessionOpened>, AppError> {
+    mark_activity(&state);
     let repo_path = canonicalize_repo(PathBuf::from(request.repo_path))?;
     let diff_target = request.diff_target.unwrap_or_default();
     let session_id = crate::api::session_id_for(&repo_path, &diff_target);
 
-    let mut guard = state.inner.lock().map_err(|_| anyhow!("state lock poisoned"))?;
+    let mut guard = state
+        .inner
+        .lock()
+        .map_err(|_| anyhow!("state lock poisoned"))?;
     match guard.sessions.get_mut(&session_id) {
         Some(session) => {
             session.repo_path = repo_path;
             session.diff_target = diff_target;
         }
         None => {
-            guard.sessions.insert(session_id.clone(), RepoSession {
-                repo_path,
-                diff_target,
-                comments: HashMap::new(),
-                comment_contexts: HashMap::new(),
-                reviewed: HashSet::new(),
-                selected_agent: AgentKind::None,
-                comment_dispatches: HashMap::new(),
-            });
+            guard.sessions.insert(
+                session_id.clone(),
+                RepoSession {
+                    repo_path,
+                    diff_target,
+                    comments: HashMap::new(),
+                    comment_contexts: HashMap::new(),
+                    reviewed: HashSet::new(),
+                    selected_agent: AgentKind::None,
+                    comment_dispatches: HashMap::new(),
+                },
+            );
         }
     }
 
@@ -151,6 +217,7 @@ async fn session_state(
     AxumPath(session_id): AxumPath<String>,
     State(state): State<AppState>,
 ) -> Result<Json<SessionPayload>, AppError> {
+    mark_activity(&state);
     let agent_availability = state.agent_availability;
     let available_agents = agent_options(agent_availability);
     let session = crate::api::with_session(&state, &session_id, |session| {
@@ -158,6 +225,7 @@ async fn session_state(
         let views = hunks
             .into_iter()
             .map(|hunk| {
+                let (added_line_count, removed_line_count) = diff_line_stats(&hunk.patch);
                 let comment = session
                     .comments
                     .get(&hunk.id)
@@ -178,6 +246,8 @@ async fn session_state(
                     comment_dispatches,
                     patch_preview: preview_patch(&hunk.patch, PATCH_PREVIEW_LINE_LIMIT),
                     patch_line_count: hunk.patch.lines().count(),
+                    added_line_count,
+                    removed_line_count,
                 }
             })
             .collect::<Vec<_>>();
@@ -208,6 +278,7 @@ async fn update_agent(
     State(state): State<AppState>,
     Json(request): Json<crate::api::AgentSelectionRequest>,
 ) -> Result<&'static str, AppError> {
+    mark_activity(&state);
     crate::api::with_session(&state, &session_id, |session| {
         if !agent_is_available(state.agent_availability, request.agent) {
             bail!("selected agent is not available");
@@ -223,6 +294,7 @@ async fn hunk_patch(
     AxumPath((session_id, hunk_id)): AxumPath<(String, String)>,
     State(state): State<AppState>,
 ) -> Result<Json<PatchPayload>, AppError> {
+    mark_activity(&state);
     let (_, patch, _) = crate::api::lookup_hunk(&state, &session_id, &hunk_id)?;
     Ok(Json(PatchPayload { patch }))
 }
@@ -231,6 +303,7 @@ async fn resolve_comment(
     AxumPath((session_id, hunk_id, comment_index)): AxumPath<(String, String, usize)>,
     State(state): State<AppState>,
 ) -> Result<&'static str, AppError> {
+    mark_activity(&state);
     crate::api::with_session(&state, &session_id, |session| {
         let Some(existing) = session.comments.get(&hunk_id).cloned() else {
             bail!("comment no longer exists");
@@ -258,6 +331,7 @@ async fn resolve_comment_by_key(
     AxumPath((session_id, hunk_id, comment_key)): AxumPath<(String, String, String)>,
     State(state): State<AppState>,
 ) -> Result<&'static str, AppError> {
+    mark_activity(&state);
     crate::api::with_session(&state, &session_id, |session| {
         let Some(existing) = session.comments.get(&hunk_id).cloned() else {
             bail!("comment no longer exists");
@@ -289,6 +363,7 @@ async fn toggle_reviewed(
     State(state): State<AppState>,
     Json(request): Json<crate::api::HunkRequest>,
 ) -> Result<&'static str, AppError> {
+    mark_activity(&state);
     crate::api::with_session(&state, &session_id, |session| {
         if !session.reviewed.insert(request.hunk_id.clone()) {
             session.reviewed.remove(&request.hunk_id);
@@ -303,6 +378,7 @@ async fn update_comment(
     State(state): State<AppState>,
     Json(request): Json<crate::api::CommentRequest>,
 ) -> Result<&'static str, AppError> {
+    mark_activity(&state);
     let dispatch_jobs = crate::api::with_session(&state, &session_id, |session| {
         plan_comment_dispatches(session, &session_id, &request)
     })?;
@@ -319,8 +395,10 @@ async fn stage_hunk(
     State(state): State<AppState>,
     Json(request): Json<crate::api::HunkRequest>,
 ) -> Result<&'static str, AppError> {
+    mark_activity(&state);
     crate::api::ensure_session_is_writable(&state, &session_id)?;
-    let (repo_path, patch, is_staged) = crate::api::lookup_hunk(&state, &session_id, &request.hunk_id)?;
+    let (repo_path, patch, is_staged) =
+        crate::api::lookup_hunk(&state, &session_id, &request.hunk_id)?;
     if is_staged {
         return Ok("ok");
     }
@@ -333,8 +411,10 @@ async fn unstage_hunk(
     State(state): State<AppState>,
     Json(request): Json<crate::api::HunkRequest>,
 ) -> Result<&'static str, AppError> {
+    mark_activity(&state);
     crate::api::ensure_session_is_writable(&state, &session_id)?;
-    let (repo_path, patch, is_staged) = crate::api::lookup_hunk(&state, &session_id, &request.hunk_id)?;
+    let (repo_path, patch, is_staged) =
+        crate::api::lookup_hunk(&state, &session_id, &request.hunk_id)?;
     if !is_staged {
         return Ok("ok");
     }
@@ -347,8 +427,10 @@ async fn stage_selection(
     State(state): State<AppState>,
     Json(request): Json<SelectionRequest>,
 ) -> Result<&'static str, AppError> {
+    mark_activity(&state);
     crate::api::ensure_session_is_writable(&state, &session_id)?;
-    let (repo_path, patch, is_staged) = crate::api::lookup_hunk(&state, &session_id, &request.hunk_id)?;
+    let (repo_path, patch, is_staged) =
+        crate::api::lookup_hunk(&state, &session_id, &request.hunk_id)?;
     if is_staged {
         return Ok("ok");
     }
@@ -362,8 +444,10 @@ async fn stage_file(
     State(state): State<AppState>,
     Json(request): Json<crate::api::FileRequest>,
 ) -> Result<&'static str, AppError> {
+    mark_activity(&state);
     crate::api::ensure_session_is_writable(&state, &session_id)?;
-    let repo_path = crate::api::with_session(&state, &session_id, |session| Ok(session.repo_path.clone()))?;
+    let repo_path =
+        crate::api::with_session(&state, &session_id, |session| Ok(session.repo_path.clone()))?;
     run_git_no_output(&repo_path, &["add", "--", &request.file_path]).map_err(AppError)?;
     Ok("ok")
 }
@@ -373,8 +457,10 @@ async fn discard_hunk(
     State(state): State<AppState>,
     Json(request): Json<crate::api::HunkRequest>,
 ) -> Result<&'static str, AppError> {
+    mark_activity(&state);
     crate::api::ensure_session_is_writable(&state, &session_id)?;
-    let (repo_path, patch, is_staged) = crate::api::lookup_hunk(&state, &session_id, &request.hunk_id)?;
+    let (repo_path, patch, is_staged) =
+        crate::api::lookup_hunk(&state, &session_id, &request.hunk_id)?;
 
     apply_patch(&repo_path, &patch, false, true)?;
     if is_staged {
@@ -389,8 +475,14 @@ async fn unstage_file(
     State(state): State<AppState>,
     Json(request): Json<crate::api::FileRequest>,
 ) -> Result<&'static str, AppError> {
+    mark_activity(&state);
     crate::api::ensure_session_is_writable(&state, &session_id)?;
-    let repo_path = crate::api::with_session(&state, &session_id, |session| Ok(session.repo_path.clone()))?;
-    run_git_no_output(&repo_path, &["restore", "--staged", "--", &request.file_path]).map_err(AppError)?;
+    let repo_path =
+        crate::api::with_session(&state, &session_id, |session| Ok(session.repo_path.clone()))?;
+    run_git_no_output(
+        &repo_path,
+        &["restore", "--staged", "--", &request.file_path],
+    )
+    .map_err(AppError)?;
     Ok("ok")
 }

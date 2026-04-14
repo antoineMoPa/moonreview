@@ -49,12 +49,10 @@ function selectionPositionFromRect(rect: DOMRect) {
 
 function HighlightedCode({
   text,
-  truncated,
   onSelectionStart,
   onSelection,
 }: {
   text: string;
-  truncated: boolean;
   onSelectionStart: () => void;
   onSelection: (container: HTMLPreElement) => void;
 }) {
@@ -71,7 +69,6 @@ function HighlightedCode({
 
   return (
     <pre
-      className={truncated ? "code-pre-truncated" : undefined}
       onMouseDown={onSelectionStart}
       onMouseUp={(event) => onSelection(event.currentTarget)}
       onKeyUp={(event) => onSelection(event.currentTarget)}
@@ -168,7 +165,7 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
     };
   }, []);
 
-  const patchPreviewLineLimit = data?.patch_preview_line_limit ?? 100;
+  const patchPreviewLineLimit = data?.patch_preview_line_limit ?? 500;
   const isLong = hunk.patch_line_count > patchPreviewLineLimit;
   const visiblePatch = useMemo(() => {
     if (expanded && fullPatch) {
@@ -309,7 +306,15 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
             <button onClick={() => void actions.discardHunk(hunk.id)}>Discard Hunk</button>
           </>
         ) : null}
-        {isLong && expanded ? <button onClick={() => void toggleExpanded()}>Collapse Diff</button> : null}
+        {isLong ? (
+          <button onClick={() => void toggleExpanded()}>
+            {expanded
+              ? "Collapse Diff"
+              : loadingPatch
+                ? "Loading Diff..."
+                : `Expand Diff (${hunk.patch_line_count} lines)`}
+          </button>
+        ) : null}
       </div>
 
       {selectedText && !composerOpen && selectionPosition ? (
@@ -353,7 +358,6 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
               <HighlightedCode
                 key={`code-${index}`}
                 text={segment.text}
-                truncated={!expanded && isLong && index === diffSegments.length - 1}
                 onSelectionStart={() => {
                   selectionStartedInHunkRef.current = true;
                 }}
@@ -379,11 +383,6 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
             ),
           )}
         </div>
-        {isLong && !expanded ? (
-          <button className="patch-expand-button" onClick={() => void toggleExpanded()}>
-            {loadingPatch ? "Loading Diff..." : `Expand Diff (${hunk.patch_line_count} lines)`}
-          </button>
-        ) : null}
       </div>
     </article>
   );

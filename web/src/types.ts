@@ -33,6 +33,8 @@ export type Hunk = {
   comment_dispatches: CommentDispatch[];
   patch_preview: string;
   patch_line_count: number;
+  added_line_count: number;
+  removed_line_count: number;
 };
 
 export type SidebarComment = {

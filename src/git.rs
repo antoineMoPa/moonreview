@@ -12,11 +12,25 @@ use crate::{
 };
 
 pub(crate) fn canonicalize_repo(path: impl AsRef<Path>) -> Result<PathBuf> {
-    let path = path.as_ref().canonicalize().context("failed to resolve path")?;
-    if !path.join(".git").exists() {
-        bail!("{} is not a git repository", path.display());
+    let original_path = path.as_ref().to_path_buf();
+    let mut path = path
+        .as_ref()
+        .canonicalize()
+        .context("failed to resolve path")?;
+
+    loop {
+        if path.join(".git").exists() {
+            return Ok(path);
+        }
+        if !path.pop() {
+            break;
+        }
     }
-    Ok(path)
+
+    bail!(
+        "{} is not inside a git repository",
+        original_path.display()
+    )
 }
 
 pub(crate) fn collect_hunks(repo_path: &Path, diff_target: &DiffTarget) -> Result<Vec<DiffHunk>> {
@@ -25,15 +39,45 @@ pub(crate) fn collect_hunks(repo_path: &Path, diff_target: &DiffTarget) -> Resul
         return parse_diff(&diff, false);
     }
 
-    let mut hunks = parse_diff(&run_git(repo_path, &["diff", "--no-color", "--unified=3"])?, false)?;
+    let mut hunks = parse_diff(
+        &run_git(
+            repo_path,
+            &[
+                "diff",
+                "--diff-algorithm=histogram",
+                "--no-color",
+                "--unified=3",
+            ],
+        )?,
+        false,
+    )?;
     hunks.extend(parse_diff(
-        &run_git(repo_path, &["diff", "--cached", "--no-color", "--unified=3"])?,
+        &run_git(
+            repo_path,
+            &[
+                "diff",
+                "--cached",
+                "--diff-algorithm=histogram",
+                "--no-color",
+                "--unified=3",
+            ],
+        )?,
         true,
     )?);
     for path in list_untracked_files(repo_path)? {
+        let untracked_args = vec![
+            "diff",
+            "--no-index",
+            "--diff-algorithm=histogram",
+            "--no-color",
+            "--unified=3",
+            "--",
+            "/dev/null",
+            &path,
+        ];
         let diff = run_git_allow_status(
             repo_path,
-            &["diff", "--no-index", "--no-color", "--unified=3", "--", "/dev/null", &path],
+            &untracked_args,
             &[0, 1],
         )?;
         hunks.extend(parse_diff(&diff, false)?);
@@ -42,7 +86,13 @@ pub(crate) fn collect_hunks(repo_path: &Path, diff_target: &DiffTarget) -> Resul
 }
 
 fn run_target_diff(repo_path: &Path, base: &str, pathspec: Option<&str>) -> Result<String> {
-    let mut args = vec!["diff", "--no-color", "--unified=3", base];
+    let mut args = vec![
+        "diff",
+        "--diff-algorithm=histogram",
+        "--no-color",
+        "--unified=3",
+    ];
+    args.push(base);
     if let Some(pathspec) = pathspec.filter(|value| !value.is_empty()) {
         args.push("--");
         args.push(pathspec);
@@ -124,12 +174,14 @@ fn parse_file_path(section: &[String]) -> Option<String> {
 }
 
 fn list_untracked_files(repo_path: &Path) -> Result<Vec<String>> {
-    Ok(run_git(repo_path, &["ls-files", "--others", "--exclude-standard"])?
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(ToOwned::to_owned)
-        .collect())
+    Ok(
+        run_git(repo_path, &["ls-files", "--others", "--exclude-standard"])?
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(ToOwned::to_owned)
+            .collect(),
+    )
 }
 
 fn run_git_allow_status(repo_path: &Path, args: &[&str], allowed: &[i32]) -> Result<String> {
@@ -231,8 +283,12 @@ fn parse_hunk_header(header: &str) -> Result<(usize, usize, usize, usize)> {
         .map(str::trim)
         .ok_or_else(|| anyhow!("invalid hunk header"))?;
     let mut parts = raw.split_whitespace();
-    let old_part = parts.next().ok_or_else(|| anyhow!("invalid old hunk header"))?;
-    let new_part = parts.next().ok_or_else(|| anyhow!("invalid new hunk header"))?;
+    let old_part = parts
+        .next()
+        .ok_or_else(|| anyhow!("invalid old hunk header"))?;
+    let new_part = parts
+        .next()
+        .ok_or_else(|| anyhow!("invalid new hunk header"))?;
 
     let (old_start, old_count) = parse_header_range(old_part.trim_start_matches('-'))?;
     let (new_start, new_count) = parse_header_range(new_part.trim_start_matches('+'))?;
@@ -247,14 +303,24 @@ fn parse_header_range(value: &str) -> Result<(usize, usize)> {
     }
 }
 
-fn format_hunk_header(old_start: usize, old_count: usize, new_start: usize, new_count: usize) -> String {
+fn format_hunk_header(
+    old_start: usize,
+    old_count: usize,
+    new_start: usize,
+    new_count: usize,
+) -> String {
     format!(
         "@@ -{},{} +{},{} @@",
         old_start, old_count, new_start, new_count
     )
 }
 
-pub(crate) fn apply_patch(repo_path: &Path, patch: &str, cached: bool, reverse: bool) -> Result<()> {
+pub(crate) fn apply_patch(
+    repo_path: &Path,
+    patch: &str,
+    cached: bool,
+    reverse: bool,
+) -> Result<()> {
     let mut command = Command::new("git");
     command.current_dir(repo_path).arg("apply");
     if cached {
@@ -331,6 +397,64 @@ pub(crate) fn parse_review_target(raw: Option<String>) -> Result<DiffTarget> {
         base: Some(value),
         pathspec: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::canonicalize_repo;
+    use std::{
+        fs,
+        path::PathBuf,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+
+    struct TestDir {
+        path: PathBuf,
+    }
+
+    impl TestDir {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "moonreview-test-{}-{}",
+                std::process::id(),
+                NEXT_ID.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir_all(&path).expect("failed to create temp test directory");
+            Self { path }
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn canonicalize_repo_walks_up_to_git_root() {
+        let temp = TestDir::new();
+        let repo_root = temp.path.join("repo");
+        let nested = repo_root.join("src/components");
+        fs::create_dir_all(repo_root.join(".git")).expect("failed to create fake git dir");
+        fs::create_dir_all(&nested).expect("failed to create nested directory");
+
+        let resolved = canonicalize_repo(&nested).expect("expected repo root to resolve");
+
+        assert_eq!(resolved, repo_root.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn canonicalize_repo_errors_outside_git_repo() {
+        let temp = TestDir::new();
+        let dir = temp.path.join("plain/nested");
+        fs::create_dir_all(&dir).expect("failed to create plain directory");
+
+        let error = canonicalize_repo(&dir).expect_err("expected resolution failure");
+
+        assert!(error.to_string().contains("is not inside a git repository"));
+    }
 }
 
 fn command_exists(command: &str) -> bool {

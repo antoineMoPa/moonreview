@@ -8,6 +8,7 @@ type HunksProps = {
   agents: AgentOption[];
   selectedAgent: AgentKind;
   onAgentChange: (agent: AgentKind) => void;
+  selectedFilePath?: string | null;
   targetFilePath?: string | null;
   targetHunkId?: string | null;
 };
@@ -37,41 +38,49 @@ function FileAccordion({
   agents,
   selectedAgent,
   onAgentChange,
-  open,
-  onOpenChange,
 }: {
   filePath: string;
   hunks: Hunk[];
   agents: AgentOption[];
   selectedAgent: AgentKind;
   onAgentChange: (agent: AgentKind) => void;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
 }) {
   const {
     state: { data },
     actions,
   } = useReviewStore();
-  const staged = hunks[0]?.staged ?? false;
+  const staged = hunks.every((hunk) => hunk.staged);
+  const status = staged ? "Staged" : "Unstaged";
+  const diffStats = hunks.reduce(
+    (sum, hunk) => ({
+      added: sum.added + hunk.added_line_count,
+      removed: sum.removed + hunk.removed_line_count,
+    }),
+    { added: 0, removed: 0 },
+  );
   const readOnly = data?.read_only ?? false;
 
   return (
     <div id={`file-${encodeURIComponent(filePath)}`} className="file-accordion">
       <div className="file-accordion-head">
-        <button className="file-accordion-toggle" onClick={() => onOpenChange(!open)}>
+        <div className="file-accordion-toggle">
           <span>{filePath}</span>
-        </button>
+        </div>
         <span className="file-accordion-meta">
-          <span className={`badge ${staged ? "staged" : "unstaged"}`.trim()}>{staged ? "Staged" : "Unstaged"}</span>
+          <span className="diff-stats-summary">
+            <span className="diff-stat diff-stat-added">++{diffStats.added}</span>
+            <span className="diff-stat diff-stat-removed">--{diffStats.removed}</span>
+          </span>
+          <span className={`badge ${staged ? "staged" : "unstaged"}`.trim()}>{status}</span>
           <span className="muted">{hunks.length}</span>
-          {!readOnly ? (
-            <button onClick={() => void actions.toggleStageFile(filePath, staged)}>
+          {!readOnly && !staged ? (
+            <button type="button" onClick={() => void actions.toggleStageFile(filePath, staged)}>
               {staged ? "Unstage File" : "Stage File"}
             </button>
           ) : null}
         </span>
       </div>
-      <div className={`collapsible-content ${open ? "" : "collapsible-content-collapsed"}`.trim()}>
+      <div className="collapsible-content">
         {hunks.map((hunk) => (
           <HunkCard
             key={hunk.id}
@@ -81,6 +90,15 @@ function FileAccordion({
             onAgentChange={onAgentChange}
           />
         ))}
+        {!readOnly && staged ? (
+          <div className="file-accordion-footer">
+            <span className="file-accordion-meta file-accordion-meta-footer">
+              <button type="button" onClick={() => void actions.toggleStageFile(filePath, staged)}>
+                Unstage File
+              </button>
+            </span>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -91,14 +109,39 @@ export function Hunks({
   agents,
   selectedAgent,
   onAgentChange,
+  selectedFilePath,
   targetFilePath,
   targetHunkId,
 }: HunksProps) {
   const [unstagedOpen, setUnstagedOpen] = useState(true);
   const [stagedOpen, setStagedOpen] = useState(false);
-  const [openFiles, setOpenFiles] = useState<Record<string, boolean>>({});
   const unstagedGroups = useMemo(() => groupByFile(hunks.filter((hunk) => !hunk.staged)), [hunks]);
   const stagedGroups = useMemo(() => groupByFile(hunks.filter((hunk) => hunk.staged)), [hunks]);
+  const activeFilePath = useMemo(() => {
+    if (selectedFilePath && hunks.some((hunk) => hunk.file_path === selectedFilePath)) {
+      return selectedFilePath;
+    }
+    return unstagedGroups[0]?.filePath ?? stagedGroups[0]?.filePath ?? null;
+  }, [hunks, selectedFilePath, stagedGroups, unstagedGroups]);
+  const visibleUnstagedGroups = useMemo(
+    () => unstagedGroups.filter((group) => group.filePath === activeFilePath),
+    [activeFilePath, unstagedGroups],
+  );
+  const visibleStagedGroups = useMemo(
+    () => stagedGroups.filter((group) => group.filePath === activeFilePath),
+    [activeFilePath, stagedGroups],
+  );
+  const diffStats = useMemo(
+    () =>
+      hunks.reduce(
+        (sum, hunk) => ({
+          added: sum.added + hunk.added_line_count,
+          removed: sum.removed + hunk.removed_line_count,
+        }),
+        { added: 0, removed: 0 },
+      ),
+    [hunks],
+  );
   const hunkTargets = useMemo(
     () =>
       new Map(
@@ -118,34 +161,12 @@ export function Hunks({
   }, [stagedGroups.length]);
 
   useEffect(() => {
-    setOpenFiles((current) => {
-      const next = { ...current };
-      let changed = false;
-      for (const group of unstagedGroups) {
-        if (!(group.filePath in next)) {
-          next[group.filePath] = true;
-          changed = true;
-        }
-      }
-      for (const group of stagedGroups) {
-        if (!(group.filePath in next)) {
-          next[group.filePath] = false;
-          changed = true;
-        }
-      }
-
-      return changed ? next : current;
-    });
-  }, [stagedGroups, unstagedGroups]);
-
-  useEffect(() => {
     const target = targetHunkId ? hunkTargets.get(targetHunkId) : null;
     const nextFilePath = target?.filePath ?? targetFilePath;
     if (!nextFilePath) {
       return;
     }
 
-    setOpenFiles((current) => ({ ...current, [nextFilePath]: true }));
     if (target) {
       if (target.staged) {
         setStagedOpen(true);
@@ -155,26 +176,30 @@ export function Hunks({
       return;
     }
 
-    const fileGroup = hunks.find((hunk) => hunk.file_path === nextFilePath);
-    if (fileGroup) {
-      if (fileGroup.staged) {
-        setStagedOpen(true);
-      } else {
-        setUnstagedOpen(true);
-      }
+    const fileHunks = hunks.filter((hunk) => hunk.file_path === nextFilePath);
+    if (fileHunks.some((hunk) => hunk.staged)) {
+      setStagedOpen(true);
+    }
+    if (fileHunks.some((hunk) => !hunk.staged)) {
+      setUnstagedOpen(true);
     }
   }, [hunkTargets, hunks, targetFilePath, targetHunkId]);
 
   return (
     <div className="hunk-sections">
+      <div className="diff-stats-summary" aria-label="Diff stats">
+        <span className="diff-stat diff-stat-added">++{diffStats.added}</span>
+        <span className="diff-stat diff-stat-removed">--{diffStats.removed}</span>
+      </div>
+
       <section className="panel panel-plain hunk-section">
         <button className="hunk-section-toggle hunk-section-toggle-large" onClick={() => setUnstagedOpen((open) => !open)}>
           <h2>Unstaged</h2>
-          <span className="muted">{unstagedGroups.reduce((sum, group) => sum + group.hunks.length, 0)}</span>
+          <span className="muted">{visibleUnstagedGroups.reduce((sum, group) => sum + group.hunks.length, 0)}</span>
         </button>
         <div className={`collapsible-content ${unstagedOpen ? "" : "collapsible-content-collapsed"}`.trim()}>
-          {unstagedGroups.length > 0 ? (
-            unstagedGroups.map((group) => (
+          {visibleUnstagedGroups.length > 0 ? (
+            visibleUnstagedGroups.map((group) => (
               <FileAccordion
                 key={group.filePath}
                 filePath={group.filePath}
@@ -182,14 +207,12 @@ export function Hunks({
                 agents={agents}
                 selectedAgent={selectedAgent}
                 onAgentChange={onAgentChange}
-                open={openFiles[group.filePath] ?? true}
-                onOpenChange={(open) =>
-                  setOpenFiles((current) => ({ ...current, [group.filePath]: open }))
-                }
               />
             ))
           ) : (
-            <div className="empty-section muted">No unstaged hunks.</div>
+            <div className="empty-section muted">
+              {activeFilePath ? `No unstaged hunks in ${activeFilePath}.` : "No unstaged hunks."}
+            </div>
           )}
         </div>
       </section>
@@ -197,11 +220,11 @@ export function Hunks({
       <section className="panel panel-plain hunk-section">
         <button className="hunk-section-toggle hunk-section-toggle-large" onClick={() => setStagedOpen((open) => !open)}>
           <h2>Staged</h2>
-          <span className="muted">{stagedGroups.reduce((sum, group) => sum + group.hunks.length, 0)}</span>
+          <span className="muted">{visibleStagedGroups.reduce((sum, group) => sum + group.hunks.length, 0)}</span>
         </button>
         <div className={`collapsible-content ${stagedOpen ? "" : "collapsible-content-collapsed"}`.trim()}>
-          {stagedGroups.length > 0 ? (
-            stagedGroups.map((group) => (
+          {visibleStagedGroups.length > 0 ? (
+            visibleStagedGroups.map((group) => (
               <FileAccordion
                 key={group.filePath}
                 filePath={group.filePath}
@@ -209,10 +232,6 @@ export function Hunks({
                 agents={agents}
                 selectedAgent={selectedAgent}
                 onAgentChange={onAgentChange}
-                open={openFiles[group.filePath] ?? false}
-                onOpenChange={(open) =>
-                  setOpenFiles((current) => ({ ...current, [group.filePath]: open }))
-                }
               />
             ))
           ) : (

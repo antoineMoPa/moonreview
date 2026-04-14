@@ -3,6 +3,7 @@ use std::{
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    time::Instant,
 };
 
 use anyhow::{Result, anyhow, bail};
@@ -20,6 +21,7 @@ pub(crate) const EXPORT_SERVER_URL: &str = "http://localhost:42000";
 pub(crate) struct AppState {
     pub(crate) inner: Arc<Mutex<ServerState>>,
     pub(crate) agent_availability: AgentAvailability,
+    pub(crate) last_activity: Arc<Mutex<Instant>>,
 }
 
 #[derive(Default)]
@@ -72,6 +74,8 @@ pub(crate) struct HunkView {
     pub(crate) comment_dispatches: Vec<CommentDispatchView>,
     pub(crate) patch_preview: String,
     pub(crate) patch_line_count: usize,
+    pub(crate) added_line_count: usize,
+    pub(crate) removed_line_count: usize,
 }
 
 #[derive(Clone, Default)]
@@ -208,11 +212,18 @@ impl IntoResponse for AppError {
     }
 }
 
-pub(crate) fn with_session<T, F>(state: &AppState, session_id: &str, mut f: F) -> Result<T, AppError>
+pub(crate) fn with_session<T, F>(
+    state: &AppState,
+    session_id: &str,
+    mut f: F,
+) -> Result<T, AppError>
 where
     F: FnMut(&mut RepoSession) -> Result<T>,
 {
-    let mut guard = state.inner.lock().map_err(|_| anyhow!("state lock poisoned"))?;
+    let mut guard = state
+        .inner
+        .lock()
+        .map_err(|_| anyhow!("state lock poisoned"))?;
     let session = guard
         .sessions
         .get_mut(session_id)
@@ -220,7 +231,10 @@ where
     f(session).map_err(AppError)
 }
 
-pub(crate) fn ensure_session_is_writable(state: &AppState, session_id: &str) -> Result<(), AppError> {
+pub(crate) fn ensure_session_is_writable(
+    state: &AppState,
+    session_id: &str,
+) -> Result<(), AppError> {
     with_session(state, session_id, |session| {
         if session.diff_target.base.is_some() {
             bail!("range diffs are read-only");
@@ -250,5 +264,9 @@ pub(crate) fn stable_id<T: Hash>(value: &T) -> String {
 }
 
 pub(crate) fn session_id_for(path: &Path, diff_target: &DiffTarget) -> String {
-    stable_id(&(path.display().to_string(), diff_target.base.clone(), diff_target.pathspec.clone()))
+    stable_id(&(
+        path.display().to_string(),
+        diff_target.base.clone(),
+        diff_target.pathspec.clone(),
+    ))
 }

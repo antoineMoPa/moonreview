@@ -19,32 +19,77 @@ function SidebarSection({ title, children }: SidebarSectionProps) {
 
 type SidebarFileButtonProps = {
   file: SidebarFileItem;
+  active: boolean;
+  readOnly: boolean;
+  busy: boolean;
   onJumpToFile: (filePath: string) => void;
+  onToggleFileStage: (file: SidebarFileItem) => void;
 };
 
-function SidebarFileButton({ file, onJumpToFile }: SidebarFileButtonProps) {
+function statusLabel(file: SidebarFileItem) {
+  if (file.status === "partial") {
+    return "Partial";
+  }
+  return file.status === "staged" ? "Staged" : "Unstaged";
+}
+
+function SidebarFileButton({ file, active, readOnly, busy, onJumpToFile, onToggleFileStage }: SidebarFileButtonProps) {
   return (
-    <button className="sidebar-link" onClick={() => onJumpToFile(file.filePath)} title={file.filePath}>
-      <span className="sidebar-link-name">{file.fileName}</span>
+    <div className="sidebar-link" title={file.filePath}>
+      <button
+        className={`sidebar-link-action ${active ? "sidebar-link-active" : ""}`.trim()}
+        type="button"
+        onClick={() => onJumpToFile(file.filePath)}
+      >
+        <span className="sidebar-link-name">{file.fileName}</span>
+      </button>
       <span className="sidebar-link-meta">
-        <span className={`badge ${file.staged ? "staged" : "unstaged"}`.trim()}>
-          {file.staged ? "Staged" : "Unstaged"}
-        </span>
+        <button
+          className={`badge sidebar-file-status sidebar-file-status-${file.status}`.trim()}
+          type="button"
+          title="toggle file stage"
+          disabled={readOnly || busy}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleFileStage(file);
+          }}
+        >
+          {statusLabel(file)}
+        </button>
       </span>
-    </button>
+    </div>
   );
 }
 
 type SidebarFilesSectionProps = {
   files: SidebarFileItem[];
+  activeFilePath?: string | null;
+  readOnly: boolean;
+  busy: boolean;
   onJumpToFile: (filePath: string) => void;
+  onToggleFileStage: (file: SidebarFileItem) => void;
 };
 
-export function SidebarFilesSection({ files, onJumpToFile }: SidebarFilesSectionProps) {
+export function SidebarFilesSection({
+  files,
+  activeFilePath,
+  readOnly,
+  busy,
+  onJumpToFile,
+  onToggleFileStage,
+}: SidebarFilesSectionProps) {
   return (
     <SidebarSection title="Files">
       {files.map((file) => (
-        <SidebarFileButton key={file.filePath} file={file} onJumpToFile={onJumpToFile} />
+        <SidebarFileButton
+          key={file.filePath}
+          file={file}
+          active={file.filePath === activeFilePath}
+          readOnly={readOnly}
+          busy={busy}
+          onJumpToFile={onJumpToFile}
+          onToggleFileStage={onToggleFileStage}
+        />
       ))}
     </SidebarSection>
   );

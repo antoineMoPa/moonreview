@@ -216,7 +216,10 @@ pub(crate) fn build_export_text(session_id: &str, hunks: &[HunkView]) -> String 
     out.push_str("=================\n");
     out.push_str("Please fix these code issues and mark as resolved:\n\n");
 
-    for hunk in hunks.iter().filter(|h| h.reviewed || !h.comment.trim().is_empty()) {
+    for hunk in hunks
+        .iter()
+        .filter(|h| h.reviewed || !h.comment.trim().is_empty())
+    {
         let anchored = parse_anchored_comments(&hunk.comment);
         if anchored.iter().all(|entry| entry.resolved) {
             continue;
@@ -243,7 +246,9 @@ pub(crate) fn build_export_text(session_id: &str, hunks: &[HunkView]) -> String 
         }
     }
 
-    if out.trim() == "Moon Review notes\n=================\nPlease fix these code issues and mark as resolved:" {
+    if out.trim()
+        == "Moon Review notes\n=================\nPlease fix these code issues and mark as resolved:"
+    {
         out.push_str("No review notes yet.\n");
     }
 
@@ -325,14 +330,20 @@ pub(crate) fn plan_comment_dispatches(
         .next_anchored
         .iter()
         .filter(|entry| !entry.resolved)
-        .filter_map(|entry| queue_dispatch_job(session, session_id, request, &hunk, &previous_keys, entry))
+        .filter_map(|entry| {
+            queue_dispatch_job(session, session_id, request, &hunk, &previous_keys, entry)
+        })
         .collect();
 
     Ok(jobs)
 }
 
 fn apply_comment_update(session: &mut RepoSession, request: &CommentRequest) -> CommentUpdate {
-    let previous_comment = session.comments.get(&request.hunk_id).cloned().unwrap_or_default();
+    let previous_comment = session
+        .comments
+        .get(&request.hunk_id)
+        .cloned()
+        .unwrap_or_default();
     let previous_anchored = parse_anchored_comments(&previous_comment);
     remember_hunk_context(session, &request.hunk_id);
 
@@ -341,10 +352,16 @@ fn apply_comment_update(session: &mut RepoSession, request: &CommentRequest) -> 
         session.comments.remove(&request.hunk_id);
         session.comment_contexts.remove(&request.hunk_id);
     } else {
-        session.comments.insert(request.hunk_id.clone(), next_comment);
+        session
+            .comments
+            .insert(request.hunk_id.clone(), next_comment);
     }
 
-    let stored_comment = session.comments.get(&request.hunk_id).cloned().unwrap_or_default();
+    let stored_comment = session
+        .comments
+        .get(&request.hunk_id)
+        .cloned()
+        .unwrap_or_default();
     let next_anchored = parse_anchored_comments(&stored_comment);
     prune_comment_dispatches(session, &request.hunk_id, &next_anchored);
 

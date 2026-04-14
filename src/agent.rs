@@ -73,7 +73,11 @@ fn summarize_agent_output(agent: &str, output: std::process::Output) -> Result<S
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
 
     if !output.status.success() {
-        let detail = if stderr.is_empty() { stdout.clone() } else { stderr.clone() };
+        let detail = if stderr.is_empty() {
+            stdout.clone()
+        } else {
+            stderr.clone()
+        };
         bail!("{agent} failed: {}", detail.trim());
     }
 
@@ -91,11 +95,19 @@ fn summarize_text(value: &str, max_len: usize) -> String {
         return compact;
     }
 
-    compact.chars().take(max_len.saturating_sub(1)).collect::<String>() + "…"
+    compact
+        .chars()
+        .take(max_len.saturating_sub(1))
+        .collect::<String>()
+        + "…"
 }
 
 pub(crate) trait ChildExt {
-    fn wait_with_output_from_stdin(self, input: &[u8], write_error: &str) -> Result<std::process::Output>;
+    fn wait_with_output_from_stdin(
+        self,
+        input: &[u8],
+        write_error: &str,
+    ) -> Result<std::process::Output>;
     fn wait_with_streamed_output_from_stdin(
         self,
         input: &[u8],
@@ -116,7 +128,8 @@ impl ChildExt for std::process::Child {
         if let Some(stdin) = self.stdin.as_mut() {
             stdin.write_all(input).context(write_error.to_string())?;
         }
-        self.wait_with_output().context("failed to wait for process")
+        self.wait_with_output()
+            .context("failed to wait for process")
     }
 
     fn wait_with_streamed_output_from_stdin(
@@ -133,8 +146,14 @@ impl ChildExt for std::process::Child {
         }
         drop(self.stdin.take());
 
-        let stdout = self.stdout.take().ok_or_else(|| anyhow!("process stdout was not piped"))?;
-        let stderr = self.stderr.take().ok_or_else(|| anyhow!("process stderr was not piped"))?;
+        let stdout = self
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow!("process stdout was not piped"))?;
+        let stderr = self
+            .stderr
+            .take()
+            .ok_or_else(|| anyhow!("process stderr was not piped"))?;
 
         let stdout_thread = thread::spawn(move || stream_reader(stdout, stdout_prefix));
         let stderr_thread = thread::spawn(move || stream_reader(stderr, stderr_prefix));
@@ -160,7 +179,9 @@ fn stream_reader<R: Read>(mut reader: R, prefix: &'static str) -> Result<Vec<u8>
     let mut buffer = [0u8; 4096];
 
     loop {
-        let bytes_read = reader.read(&mut buffer).context("failed to read process output")?;
+        let bytes_read = reader
+            .read(&mut buffer)
+            .context("failed to read process output")?;
         if bytes_read == 0 {
             break;
         }

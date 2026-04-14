@@ -1,13 +1,24 @@
 import { useMemo } from "react";
+import { useReviewStore } from "../reviewStore";
 import { COMMENT_DISPATCH_STATUS } from "../types";
 import type { CommentDispatchStatus, SessionState, SidebarComment } from "../types";
 import { SidebarCommentsSection } from "./SidebarCommentsSection";
 import { SidebarFilesSection } from "./SidebarFilesSection";
 
+export const FILE_STAGE_STATUS = {
+  staged: "staged",
+  unstaged: "unstaged",
+  partial: "partial",
+} as const;
+
+export type FileStageStatus = (typeof FILE_STAGE_STATUS)[keyof typeof FILE_STAGE_STATUS];
+
 export type SidebarFileItem = {
   filePath: string;
   fileName: string;
-  staged: boolean;
+  status: FileStageStatus;
+  addedLineCount: number;
+  removedLineCount: number;
 };
 
 export type SidebarCommentItem = {
@@ -25,6 +36,8 @@ type LeftSidebarProps = {
   data: SessionState;
   onJumpToFile: (filePath: string) => void;
   onJumpToComment: (target: { filePath: string; hunkId: string; elementId: string }) => void;
+  activeFilePath?: string | null;
+  onStageWholeFile?: (file: SidebarFileItem) => void;
 };
 
 function fileNameFromPath(filePath: string) {
@@ -37,12 +50,22 @@ function buildSidebarFiles(data: SessionState): SidebarFileItem[] {
   for (const hunk of data.hunks) {
     const existing = grouped.get(hunk.file_path);
     if (existing) {
+      existing.addedLineCount += hunk.added_line_count;
+      existing.removedLineCount += hunk.removed_line_count;
+      if (
+        (existing.status === FILE_STAGE_STATUS.staged && !hunk.staged) ||
+        (existing.status === FILE_STAGE_STATUS.unstaged && hunk.staged)
+      ) {
+        existing.status = FILE_STAGE_STATUS.partial;
+      }
       continue;
     }
     grouped.set(hunk.file_path, {
       filePath: hunk.file_path,
       fileName: fileNameFromPath(hunk.file_path),
-      staged: hunk.staged,
+      status: hunk.staged ? FILE_STAGE_STATUS.staged : FILE_STAGE_STATUS.unstaged,
+      addedLineCount: hunk.added_line_count,
+      removedLineCount: hunk.removed_line_count,
     });
   }
 
@@ -101,14 +124,33 @@ export function LeftSidebar({
   data,
   onJumpToFile,
   onJumpToComment,
+  activeFilePath,
+  onStageWholeFile,
 }: LeftSidebarProps) {
+  const {
+    state: { busy },
+    actions,
+  } = useReviewStore();
   const sidebarFiles = useMemo(() => buildSidebarFiles(data), [data]);
   const sidebarComments = useMemo(() => buildSidebarComments(data), [data]);
 
   return (
     <aside className="left-sidebar">
       <SidebarSummary commentCount={sidebarComments.length} fileCount={sidebarFiles.length} />
-      <SidebarFilesSection files={sidebarFiles} onJumpToFile={onJumpToFile} />
+      <SidebarFilesSection
+        files={sidebarFiles}
+        activeFilePath={activeFilePath}
+        readOnly={data.read_only}
+        busy={busy}
+        onJumpToFile={onJumpToFile}
+        onToggleFileStage={(file) => {
+          const shouldUnstage = file.status === FILE_STAGE_STATUS.staged;
+          if (!shouldUnstage) {
+            onStageWholeFile?.(file);
+          }
+          void actions.toggleStageFile(file.filePath, shouldUnstage);
+        }}
+      />
       <SidebarCommentsSection comments={sidebarComments} onJumpToComment={onJumpToComment} />
     </aside>
   );

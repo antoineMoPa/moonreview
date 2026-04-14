@@ -168,7 +168,9 @@ Use `branch:pathspec` to limit the diff to part of the repo, for example `dev:./
 fn ensure_server_running(logs: bool) -> Result<()> {
     if server_is_running() {
         if logs {
-            eprintln!("moonreview server already running; restart it to attach logs to this terminal");
+            eprintln!(
+                "moonreview server already running; restart it to attach logs to this terminal"
+            );
         }
         return Ok(());
     }

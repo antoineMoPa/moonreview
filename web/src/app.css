@@ -103,10 +103,29 @@ main {
 }
 
 .sidebar-link {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
   padding: 0;
   border: 0;
   background: transparent;
   border-radius: 0;
+}
+
+.sidebar-link-action {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: 0;
+  text-align: left;
+  color: inherit;
+}
+
+.sidebar-link-active {
+  color: var(--accent);
 }
 
 .sidebar-link-meta {
@@ -117,12 +136,58 @@ main {
   padding-left: 0.75rem;
 }
 
+.diff-stats-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.diff-stat {
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.diff-stat-added {
+  color: #247045;
+}
+
+.diff-stat-removed {
+  color: #a12d22;
+}
+
+.sidebar-file-status {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.sidebar-file-status.staged,
+.sidebar-file-status-staged {
+  color: #1f4d34;
+}
+
+.sidebar-file-status.unstaged,
+.sidebar-file-status-unstaged {
+  color: #9d2f24;
+}
+
+.sidebar-file-status.partial,
+.sidebar-file-status-partial,
+.partial {
+  color: #9a6c12;
+}
+
 .sidebar-link-name,
 .sidebar-comment-file {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sidebar-link-name {
+  font-size: 11px;
 }
 
 .sidebar-comment-link {
@@ -242,7 +307,7 @@ button.secondary {
   border-color: var(--accent-2);
 }
 
-button:active:not(:disabled):not(.patch-expand-button) {
+button:active:not(:disabled) {
   transform: translateY(1px);
 }
 
@@ -307,6 +372,10 @@ select {
   gap: 1rem;
 }
 
+.diff-stats-summary {
+  margin-bottom: 0.25rem;
+}
+
 .hunk-section {
   display: grid;
 }
@@ -361,6 +430,16 @@ select {
   align-items: center;
   flex-wrap: wrap;
   gap: 0.6rem;
+}
+
+.file-accordion-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 1rem 1rem;
+}
+
+.file-accordion-meta-footer {
+  justify-content: flex-end;
 }
 
 .collapsible-content {
@@ -436,16 +515,12 @@ pre {
   z-index: 1;
 }
 
-.code-pre-truncated {
-  margin-bottom: 0;
-}
-
 .patch-truncated::before {
   content: "";
   position: absolute;
   inset: 1px;
   border-radius: 3px;
-  background: rgba(0, 0, 0, 0.1);
+  background: rgba(0, 0, 0, 0.2);
   pointer-events: none;
   z-index: 2;
 }
@@ -461,15 +536,6 @@ pre {
   background: rgba(255, 253, 249, 0.98);
   pointer-events: none;
   z-index: 3;
-}
-
-.patch-expand-button {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 4;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
 }
 
 .line-actions {

@@ -24,5 +24,8 @@ fn main() {
         .expect("failed to run npm run build");
     assert!(build_status.success(), "npm run build failed");
 
-    assert!(dist_file.exists(), "expected bundled frontend at web/dist/app.js");
+    assert!(
+        dist_file.exists(),
+        "expected bundled frontend at web/dist/app.js"
+    );
 }
