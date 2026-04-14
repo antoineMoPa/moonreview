@@ -37,17 +37,6 @@ I usually use this as part of my debug loop:
 pkill moon;  cargo install --path . ; moonreview
 ```
 
-## Troubleshooting
-
-### `moonreview: command not found` after installing
-
-`~/.cargo/bin` may not be in your PATH. Add it to your shell config (e.g. `~/.zshrc`):
-
-```bash
-echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.zshrc
-source ~/.zshrc
-```
-
 ## Origin of name
 
 This is a project started during lunch time, so an AI tool named it noon-review which
