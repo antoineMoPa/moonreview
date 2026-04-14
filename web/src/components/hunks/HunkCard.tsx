@@ -295,6 +295,14 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
     setExpanded(true);
   }
 
+  function confirmDiscardHunk() {
+    if (!window.confirm("Discard this hunk?")) {
+      return;
+    }
+
+    void actions.discardHunk(hunk.id);
+  }
+
   return (
     <article id={`hunk-${hunk.id}`} className="panel hunk" ref={hunkRef}>
       <div className="hunk-actions">
@@ -303,7 +311,7 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
             <button onClick={() => void actions.toggleStage(hunk.id, hunk.staged)}>
               {hunk.staged ? "Unstage Hunk" : "Stage Hunk"}
             </button>
-            <button onClick={() => void actions.discardHunk(hunk.id)}>Discard Hunk</button>
+            <button onClick={confirmDiscardHunk}>Discard Hunk</button>
           </>
         ) : null}
         {isLong ? (
