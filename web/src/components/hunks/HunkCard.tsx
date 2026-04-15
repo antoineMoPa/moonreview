@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import hljs from "highlight.js/lib/core";
 import diff from "highlight.js/lib/languages/diff";
 import { fetchHunkPatch } from "../../api";
@@ -47,36 +47,138 @@ function selectionPositionFromRect(rect: DOMRect) {
   };
 }
 
+type FloatingPosition = {
+  top: number;
+  left: number;
+};
+
+type DiffLine = {
+  text: string;
+  newLineNumber: number | null;
+  commentable: boolean;
+  highlightedHtml: string;
+};
+
+function parseHunkHeader(line: string): { oldStart: number; newStart: number } | null {
+  const match = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    oldStart: Number.parseInt(match[1], 10),
+    newStart: Number.parseInt(match[2], 10),
+  };
+}
+
+function buildDiffLines(text: string): DiffLine[] {
+  let oldLineNumber: number | null = null;
+  let newLineNumber: number | null = null;
+
+  return text.split("\n").map((line) => {
+    let next: DiffLine;
+
+    if (line.startsWith("@@")) {
+      const parsed = parseHunkHeader(line);
+      oldLineNumber = parsed?.oldStart ?? null;
+      newLineNumber = parsed?.newStart ?? null;
+      next = {
+        text: line,
+        newLineNumber: null,
+        commentable: false,
+        highlightedHtml: hljs.highlight(line, { language: "diff" }).value,
+      };
+    } else if (line.startsWith("+") && !line.startsWith("+++")) {
+      next = {
+        text: line,
+        newLineNumber,
+        commentable: true,
+        highlightedHtml: hljs.highlight(line, { language: "diff" }).value,
+      };
+      newLineNumber = newLineNumber === null ? null : newLineNumber + 1;
+    } else if (line.startsWith("-") && !line.startsWith("---")) {
+      next = {
+        text: line,
+        newLineNumber: null,
+        commentable: true,
+        highlightedHtml: hljs.highlight(line, { language: "diff" }).value,
+      };
+      oldLineNumber = oldLineNumber === null ? null : oldLineNumber + 1;
+    } else if (line.startsWith(" ")) {
+      next = {
+        text: line,
+        newLineNumber,
+        commentable: true,
+        highlightedHtml: hljs.highlight(line, { language: "diff" }).value,
+      };
+      oldLineNumber = oldLineNumber === null ? null : oldLineNumber + 1;
+      newLineNumber = newLineNumber === null ? null : newLineNumber + 1;
+    } else {
+      next = {
+        text: line,
+        newLineNumber: null,
+        commentable: false,
+        highlightedHtml: hljs.highlight(line, { language: "diff" }).value,
+      };
+    }
+
+    return next;
+  });
+}
+
 function HighlightedCode({
   text,
   onSelectionStart,
   onSelection,
+  onLineNumberClick,
 }: {
   text: string;
   onSelectionStart: () => void;
-  onSelection: (container: HTMLPreElement) => void;
+  onSelection: (container: HTMLDivElement) => void;
+  onLineNumberClick: (line: string, rect: DOMRect) => void;
 }) {
-  const codeRef = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    if (codeRef.current) {
-      codeRef.current.removeAttribute("data-highlighted");
-      codeRef.current.classList.remove("hljs");
-      codeRef.current.textContent = text;
-      hljs.highlightElement(codeRef.current);
-    }
-  }, [text]);
+  const lines = useMemo(() => buildDiffLines(text), [text]);
+  const gutterChars = useMemo(() => {
+    const maxLineNumber = lines.reduce(
+      (max, line) => (line.newLineNumber !== null ? Math.max(max, line.newLineNumber) : max),
+      0,
+    );
+    return Math.max(String(maxLineNumber || 0).length, 2);
+  }, [lines]);
 
   return (
-    <pre
+    <div
+      className="diff-code"
+      style={{ "--diff-gutter-ch": gutterChars } as CSSProperties}
       onMouseDown={onSelectionStart}
       onMouseUp={(event) => onSelection(event.currentTarget)}
       onKeyUp={(event) => onSelection(event.currentTarget)}
     >
-      <code ref={codeRef} className="language-diff">
-        {text}
-      </code>
-    </pre>
+      {lines.map((line, index) => (
+        <div key={`${index}:${line.text}`} className="diff-line">
+          <button
+            type="button"
+            className={`diff-gutter-button ${line.commentable && line.newLineNumber !== null ? "diff-gutter-button-active" : ""}`.trim()}
+            onClick={(event) => {
+              if (line.commentable && line.newLineNumber !== null) {
+                onLineNumberClick(line.text, event.currentTarget.getBoundingClientRect());
+              }
+            }}
+            aria-label={
+              line.newLineNumber !== null
+                ? `Add comment on new line ${line.newLineNumber}`
+                : "No line number"
+            }
+          >
+            {line.newLineNumber ?? ""}
+          </button>
+          <div
+            className="diff-line-code"
+            dangerouslySetInnerHTML={{ __html: line.highlightedHtml || "&nbsp;" }}
+          />
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -95,6 +197,10 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
   const [selectedText, setSelectedText] = useState("");
   const [composerOpen, setComposerOpen] = useState(false);
   const [selectionPosition, setSelectionPosition] = useState<{ top: number; left: number } | null>(null);
+  const [lockedSelectedText, setLockedSelectedText] = useState("");
+  const [lockedSelectionPosition, setLockedSelectionPosition] = useState<{ top: number; left: number } | null>(
+    null,
+  );
   const [editingCommentIndex, setEditingCommentIndex] = useState<number | null>(null);
   const [editingCommentValue, setEditingCommentValue] = useState("");
 
@@ -179,6 +285,35 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
   const readOnly = data?.read_only ?? false;
   const attachedDraft = selectionDraft?.hunkId === hunk.id ? selectionDraft : null;
 
+  function openSelectionDraft(selection: string, anchorPosition?: FloatingPosition) {
+    const nextSelection = selection.trim();
+    if (!nextSelection) {
+      return;
+    }
+
+    if (
+      attachedDraft &&
+      attachedDraft.note.trim() &&
+      attachedDraft.selectedText !== nextSelection &&
+      !window.confirm("Replace this in-progress comment draft?")
+    ) {
+      return;
+    }
+
+    actions.setSelectionDraft({
+      hunkId: hunk.id,
+      filePath: hunk.file_path,
+      header: hunk.header,
+      selectedText: nextSelection,
+      note: attachedDraft?.selectedText === nextSelection ? attachedDraft.note : "",
+    });
+    if (anchorPosition) {
+      setLockedSelectedText(nextSelection);
+      setLockedSelectionPosition(anchorPosition);
+    }
+    setComposerOpen(true);
+  }
+
   function captureSelection(container: Node) {
     if (composerOpenRef.current) {
       return;
@@ -207,6 +342,8 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
     setSelectedText("");
     setComposerOpen(false);
     setSelectionPosition(null);
+    setLockedSelectedText("");
+    setLockedSelectionPosition(null);
   }
 
   function closeSelectionComposer() {
@@ -219,7 +356,7 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
   }
 
   function addAnchoredComment() {
-    const activeSelectedText = attachedDraft?.selectedText ?? selectedText;
+    const activeSelectedText = attachedDraft?.selectedText ?? lockedSelectedText ?? selectedText;
     const note = attachedDraft?.note ?? "";
     if (!activeSelectedText.trim() || !note.trim()) {
       return;
@@ -327,14 +464,9 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
           style={{ top: selectionPosition.top, left: selectionPosition.left }}
           onAddComment={() => {
             composerOpenRef.current = true;
-            setComposerOpen(true);
-            actions.setSelectionDraft({
-              hunkId: hunk.id,
-              filePath: hunk.file_path,
-              header: hunk.header,
-              selectedText,
-              note: "",
-            });
+            setLockedSelectedText(selectedText);
+            setLockedSelectionPosition(selectionPosition);
+            openSelectionDraft(selectedText, selectionPosition);
           }}
           onStageLines={
             readOnly
@@ -362,6 +494,11 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
           onAgentChange={onAgentChange}
           onAdd={addAnchoredComment}
           onClear={closeSelectionComposer}
+          style={
+            composerOpen && lockedSelectionPosition
+              ? { top: lockedSelectionPosition.top + 36, left: lockedSelectionPosition.left }
+              : undefined
+          }
         />
       ) : null}
 
@@ -376,6 +513,7 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
                   selectionStartedInHunkRef.current = true;
                 }}
                 onSelection={captureSelection}
+                onLineNumberClick={(line, rect) => openSelectionDraft(line, selectionPositionFromRect(rect))}
               />
             ) : (
               <InlineCommentCard

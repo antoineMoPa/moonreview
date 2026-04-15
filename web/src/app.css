@@ -510,9 +510,62 @@ pre {
   gap: 0;
 }
 
-.patch-wrap pre {
+.patch-wrap pre,
+.patch-wrap .diff-code {
   position: relative;
   z-index: 1;
+}
+
+.diff-code {
+  --diff-gutter-ch: 2;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: #fffdf9;
+  color: var(--code);
+  font: 0.9rem monospace;
+  overflow: auto;
+}
+
+.diff-line {
+  display: grid;
+  grid-template-columns: calc(var(--diff-gutter-ch) * 1ch + 0.9rem) minmax(0, 1fr);
+}
+
+.diff-gutter-button {
+  border: 0;
+  border-right: 1px solid rgba(49, 42, 34, 0.08);
+  border-radius: 0;
+  background: rgba(49, 42, 34, 0.04);
+  color: var(--muted);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+  text-align: right;
+  padding: 0.05rem 0.3rem 0.05rem 0.2rem;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.diff-gutter-button-active {
+  cursor: pointer;
+}
+
+.diff-gutter-button-active:hover {
+  background: rgba(183, 82, 45, 0.12);
+  color: var(--accent);
+}
+
+.diff-line-code {
+  min-width: 0;
+  padding: 0.05rem 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.diff-line-code .hljs {
+  background: transparent;
+  padding: 0;
 }
 
 .patch-truncated::before {
