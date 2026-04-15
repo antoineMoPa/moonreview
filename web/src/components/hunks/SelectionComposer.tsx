@@ -26,7 +26,10 @@ export function SelectionComposer({
   style,
 }: SelectionComposerProps) {
   return (
-    <div className="anchor-composer anchor-composer-floating" style={style}>
+    <div
+      className={`anchor-composer ${style ? "anchor-composer-floating" : ""}`.trim()}
+      style={style}
+    >
       <div className="muted">Selected area</div>
       <pre className="selection-preview">{selectedText}</pre>
       <textarea

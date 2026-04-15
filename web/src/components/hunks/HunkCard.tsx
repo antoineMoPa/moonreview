@@ -82,7 +82,7 @@ function HighlightedCode({
 
 export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCardProps) {
   const {
-    state: { data },
+    state: { data, selectionDraft },
     actions,
   } = useReviewStore();
   const hunkRef = useRef<HTMLElement | null>(null);
@@ -93,11 +93,8 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
   const [loadingPatch, setLoadingPatch] = useState(false);
   const [commentValue, setCommentValue] = useState(hunk.comment);
   const [selectedText, setSelectedText] = useState("");
-  const [selectionNote, setSelectionNote] = useState("");
   const [composerOpen, setComposerOpen] = useState(false);
   const [selectionPosition, setSelectionPosition] = useState<{ top: number; left: number } | null>(null);
-  const [lockedSelectedText, setLockedSelectedText] = useState("");
-  const [lockedSelectionPosition, setLockedSelectionPosition] = useState<{ top: number; left: number } | null>(null);
   const [editingCommentIndex, setEditingCommentIndex] = useState<number | null>(null);
   const [editingCommentValue, setEditingCommentValue] = useState("");
 
@@ -180,6 +177,7 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
     [visiblePatch, parsedComments],
   );
   const readOnly = data?.read_only ?? false;
+  const attachedDraft = selectionDraft?.hunkId === hunk.id ? selectionDraft : null;
 
   function captureSelection(container: Node) {
     if (composerOpenRef.current) {
@@ -207,35 +205,34 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
   function clearSelectionUi() {
     composerOpenRef.current = false;
     setSelectedText("");
-    setLockedSelectedText("");
-    setSelectionNote("");
     setComposerOpen(false);
     setSelectionPosition(null);
-    setLockedSelectionPosition(null);
   }
 
   function closeSelectionComposer() {
-    if (selectionNote.trim() && !window.confirm("Discard this comment?")) {
+    if (attachedDraft?.note.trim() && !window.confirm("Discard this comment?")) {
       return;
     }
 
+    actions.clearSelectionDraft();
     clearSelectionUi();
   }
 
   function addAnchoredComment() {
-    const activeSelectedText = composerOpen ? lockedSelectedText : selectedText;
-    if (!activeSelectedText.trim() || !selectionNote.trim()) {
+    const activeSelectedText = attachedDraft?.selectedText ?? selectedText;
+    const note = attachedDraft?.note ?? "";
+    if (!activeSelectedText.trim() || !note.trim()) {
       return;
     }
 
     const next = buildAnchoredCommentValue([
-      { selection: activeSelectedText, comment: selectionNote, resolved: false },
+      { selection: activeSelectedText, comment: note, resolved: false },
       ...parsedComments,
     ]).trim();
 
     setCommentValue(next);
     actions.updateDraftComment(hunk.id, next);
-    setSelectionNote("");
+    actions.clearSelectionDraft();
     setSelectedText("");
     setComposerOpen(false);
     void actions.saveComment(hunk.id, next);
@@ -330,9 +327,14 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
           style={{ top: selectionPosition.top, left: selectionPosition.left }}
           onAddComment={() => {
             composerOpenRef.current = true;
-            setLockedSelectedText(selectedText);
-            setLockedSelectionPosition(selectionPosition);
             setComposerOpen(true);
+            actions.setSelectionDraft({
+              hunkId: hunk.id,
+              filePath: hunk.file_path,
+              header: hunk.header,
+              selectedText,
+              note: "",
+            });
           }}
           onStageLines={
             readOnly
@@ -345,17 +347,21 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
         />
       ) : null}
 
-      {lockedSelectedText && composerOpen && lockedSelectionPosition ? (
+      {attachedDraft ? (
         <SelectionComposer
-          selectedText={lockedSelectedText}
-          note={selectionNote}
+          selectedText={attachedDraft.selectedText}
+          note={attachedDraft.note}
           agents={agents}
           selectedAgent={selectedAgent}
-          onNoteChange={setSelectionNote}
+          onNoteChange={(value) =>
+            actions.setSelectionDraft({
+              ...attachedDraft,
+              note: value,
+            })
+          }
           onAgentChange={onAgentChange}
           onAdd={addAnchoredComment}
           onClear={closeSelectionComposer}
-          style={{ top: lockedSelectionPosition.top + 36, left: lockedSelectionPosition.left }}
         />
       ) : null}
 
