@@ -177,9 +177,6 @@ export function Hunks({
     }
 
     const fileHunks = hunks.filter((hunk) => hunk.file_path === nextFilePath);
-    if (fileHunks.some((hunk) => hunk.staged)) {
-      setStagedOpen(true);
-    }
     if (fileHunks.some((hunk) => !hunk.staged)) {
       setUnstagedOpen(true);
     }
