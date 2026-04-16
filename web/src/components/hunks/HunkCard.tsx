@@ -10,9 +10,11 @@ import {
 import { useReviewStore } from "../../reviewStore";
 import type { AgentKind, AgentOption, Hunk } from "../../types";
 import { splitDiffIntoSegments } from "./diffSegments";
+import { HunkCommentContextProvider } from "./HunkCommentContext";
 import { InlineCommentCard } from "./InlineCommentCard";
 import { LineActions } from "./LineActions";
 import { SelectionComposer } from "./SelectionComposer";
+import { useHunkComments } from "./useHunkComments";
 
 hljs.registerLanguage("diff", diff);
 
@@ -135,7 +137,7 @@ function HighlightedCode({
   text: string;
   onSelectionStart: () => void;
   onSelection: (container: HTMLDivElement) => void;
-  onLineNumberClick: (line: string, rect: DOMRect) => void;
+  onLineNumberClick: (line: string, rect: DOMRect, lineNumber: number) => void;
 }) {
   const lines = useMemo(() => buildDiffLines(text), [text]);
   const gutterChars = useMemo(() => {
@@ -161,7 +163,11 @@ function HighlightedCode({
             className={`diff-gutter-button ${line.commentable && line.newLineNumber !== null ? "diff-gutter-button-active" : ""}`.trim()}
             onClick={(event) => {
               if (line.commentable && line.newLineNumber !== null) {
-                onLineNumberClick(line.text, event.currentTarget.getBoundingClientRect());
+                onLineNumberClick(
+                  line.text,
+                  event.currentTarget.getBoundingClientRect(),
+                  line.newLineNumber,
+                );
               }
             }}
             aria-label={
@@ -184,7 +190,7 @@ function HighlightedCode({
 
 export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCardProps) {
   const {
-    state: { data, selectionDraft },
+    state: { data },
     actions,
   } = useReviewStore();
   const hunkRef = useRef<HTMLElement | null>(null);
@@ -197,12 +203,9 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
   const [selectedText, setSelectedText] = useState("");
   const [composerOpen, setComposerOpen] = useState(false);
   const [selectionPosition, setSelectionPosition] = useState<{ top: number; left: number } | null>(null);
-  const [lockedSelectedText, setLockedSelectedText] = useState("");
   const [lockedSelectionPosition, setLockedSelectionPosition] = useState<{ top: number; left: number } | null>(
     null,
   );
-  const [editingCommentIndex, setEditingCommentIndex] = useState<number | null>(null);
-  const [editingCommentValue, setEditingCommentValue] = useState("");
 
   useEffect(() => {
     setCommentValue(hunk.comment);
@@ -278,41 +281,20 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
   }, [expanded, fullPatch, hunk.patch_preview]);
 
   const parsedComments = useMemo(() => parseAnchoredComments(commentValue), [commentValue]);
-  const diffSegments = useMemo(
-    () => splitDiffIntoSegments(visiblePatch, parsedComments),
-    [visiblePatch, parsedComments],
-  );
   const readOnly = data?.read_only ?? false;
-  const attachedDraft = selectionDraft?.hunkId === hunk.id ? selectionDraft : null;
-
-  function openSelectionDraft(selection: string, anchorPosition?: FloatingPosition) {
-    const nextSelection = selection.trim();
-    if (!nextSelection) {
-      return;
-    }
-
-    if (
-      attachedDraft &&
-      attachedDraft.note.trim() &&
-      attachedDraft.selectedText !== nextSelection &&
-      !window.confirm("Replace this in-progress comment draft?")
-    ) {
-      return;
-    }
-
-    actions.setSelectionDraft({
-      hunkId: hunk.id,
-      filePath: hunk.file_path,
-      header: hunk.header,
-      selectedText: nextSelection,
-      note: attachedDraft?.selectedText === nextSelection ? attachedDraft.note : "",
-    });
-    if (anchorPosition) {
-      setLockedSelectedText(nextSelection);
-      setLockedSelectionPosition(anchorPosition);
-    }
-    setComposerOpen(true);
-  }
+  const { activeDraft, diffSegments, openSelectionDraft, commentContextValue } = useHunkComments({
+    hunk,
+    visiblePatch,
+    commentValue,
+    setCommentValue,
+    agents,
+    selectedAgent,
+    onAgentChange,
+    clearSelectionUi,
+    setSelectedText,
+    setComposerOpen,
+    setLockedSelectionPosition,
+  });
 
   function captureSelection(container: Node) {
     if (composerOpenRef.current) {
@@ -342,72 +324,7 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
     setSelectedText("");
     setComposerOpen(false);
     setSelectionPosition(null);
-    setLockedSelectedText("");
     setLockedSelectionPosition(null);
-  }
-
-  function closeSelectionComposer() {
-    if (attachedDraft?.note.trim() && !window.confirm("Discard this comment?")) {
-      return;
-    }
-
-    actions.clearSelectionDraft();
-    clearSelectionUi();
-  }
-
-  function addAnchoredComment() {
-    const activeSelectedText = attachedDraft?.selectedText ?? lockedSelectedText ?? selectedText;
-    const note = attachedDraft?.note ?? "";
-    if (!activeSelectedText.trim() || !note.trim()) {
-      return;
-    }
-
-    const next = buildAnchoredCommentValue([
-      { selection: activeSelectedText, comment: note, resolved: false },
-      ...parsedComments,
-    ]).trim();
-
-    setCommentValue(next);
-    actions.updateDraftComment(hunk.id, next);
-    actions.clearSelectionDraft();
-    setSelectedText("");
-    setComposerOpen(false);
-    void actions.saveComment(hunk.id, next);
-  }
-
-  function persistAnchoredComments(nextAnchored: AnchoredComment[]) {
-    const next = buildAnchoredCommentValue(nextAnchored).trim();
-    setCommentValue(next);
-    actions.updateDraftComment(hunk.id, next);
-    void actions.saveComment(hunk.id, next);
-  }
-
-  function startEditingComment(index: number) {
-    setEditingCommentIndex(index);
-    setEditingCommentValue(parsedComments[index]?.comment ?? "");
-  }
-
-  function saveEditedComment(index: number) {
-    const nextAnchored = parsedComments.map((entry, entryIndex) =>
-      entryIndex === index ? { ...entry, comment: editingCommentValue } : entry,
-    );
-    persistAnchoredComments(nextAnchored);
-    setEditingCommentIndex(null);
-    setEditingCommentValue("");
-  }
-
-  function deleteComment(index: number) {
-    const nextAnchored = parsedComments.filter((_, entryIndex) => entryIndex !== index);
-    persistAnchoredComments(nextAnchored);
-    setEditingCommentIndex(null);
-    setEditingCommentValue("");
-  }
-
-  function toggleCommentResolved(index: number) {
-    const nextAnchored = parsedComments.map((entry, entryIndex) =>
-      entryIndex === index ? { ...entry, resolved: !entry.resolved } : entry,
-    );
-    persistAnchoredComments(nextAnchored);
   }
 
   async function toggleExpanded() {
@@ -437,6 +354,7 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
     void actions.discardHunk(hunk.id);
   }
 
+
   return (
     <article id={`hunk-${hunk.id}`} className="panel hunk" ref={hunkRef}>
       <div className="hunk-actions">
@@ -464,8 +382,6 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
           style={{ top: selectionPosition.top, left: selectionPosition.left }}
           onAddComment={() => {
             composerOpenRef.current = true;
-            setLockedSelectedText(selectedText);
-            setLockedSelectionPosition(selectionPosition);
             openSelectionDraft(selectedText, selectionPosition);
           }}
           onStageLines={
@@ -479,63 +395,45 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
         />
       ) : null}
 
-      {attachedDraft ? (
-        <SelectionComposer
-          selectedText={attachedDraft.selectedText}
-          note={attachedDraft.note}
-          agents={agents}
-          selectedAgent={selectedAgent}
-          onNoteChange={(value) =>
-            actions.setSelectionDraft({
-              ...attachedDraft,
-              note: value,
-            })
-          }
-          onAgentChange={onAgentChange}
-          onAdd={addAnchoredComment}
-          onClear={closeSelectionComposer}
-          style={
-            composerOpen && lockedSelectionPosition
-              ? { top: lockedSelectionPosition.top + 36, left: lockedSelectionPosition.left }
-              : undefined
-          }
-        />
-      ) : null}
+      <HunkCommentContextProvider value={commentContextValue}>
+        {activeDraft && composerOpen && lockedSelectionPosition ? (
+          <SelectionComposer
+            draftId={activeDraft.id}
+            style={{ top: lockedSelectionPosition.top + 36, left: lockedSelectionPosition.left }}
+          />
+        ) : null}
 
-      <div className={`patch-wrap ${!expanded && isLong ? "patch-truncated" : ""}`.trim()}>
-        <div className="diff-stack">
-          {diffSegments.map((segment, index) =>
-            segment.type === "code" ? (
-              <HighlightedCode
-                key={`code-${index}`}
-                text={segment.text}
-                onSelectionStart={() => {
-                  selectionStartedInHunkRef.current = true;
-                }}
-                onSelection={captureSelection}
-                onLineNumberClick={(line, rect) => openSelectionDraft(line, selectionPositionFromRect(rect))}
-              />
-            ) : (
-              <InlineCommentCard
-                key={`comment-${index}`}
-                id={`comment-${hunk.id}-${segment.index}`}
-                agents={agents}
-                selectedAgent={selectedAgent}
-                segment={segment}
-                dispatch={hunk.comment_dispatches[segment.index]}
-                editing={editingCommentIndex === segment.index}
-                editingCommentValue={editingCommentValue}
-                onAgentChange={onAgentChange}
-                onToggleResolved={toggleCommentResolved}
-                onStartEditing={startEditingComment}
-                onSave={saveEditedComment}
-                onDelete={deleteComment}
-                onEditingCommentValueChange={setEditingCommentValue}
-              />
-            ),
-          )}
+        <div className={`patch-wrap ${!expanded && isLong ? "patch-truncated" : ""}`.trim()}>
+          <div className="diff-stack">
+            {diffSegments.map((segment, index) =>
+              segment.type === "code" ? (
+                <HighlightedCode
+                  key={`code-${index}`}
+                  text={segment.text}
+                  onSelectionStart={() => {
+                    selectionStartedInHunkRef.current = true;
+                  }}
+                  onSelection={captureSelection}
+                  onLineNumberClick={(line, rect, lineNumber) =>
+                    openSelectionDraft(line, selectionPositionFromRect(rect), lineNumber)
+                  }
+                />
+              ) : segment.type === "comment" ? (
+                <InlineCommentCard
+                  key={`comment-${index}`}
+                  id={`comment-${hunk.id}-${segment.index}`}
+                  segment={segment}
+                />
+              ) : (
+                <SelectionComposer
+                  key={`draft-${segment.draftId}`}
+                  draftId={segment.draftId}
+                />
+              ),
+            )}
+          </div>
         </div>
-      </div>
+      </HunkCommentContextProvider>
     </article>
   );
 }

@@ -11,17 +11,14 @@ import {
   updateAgent as updateAgentRequest,
 } from "./api";
 import { parseAnchoredComments } from "./anchoredComments";
-import {
-  loadSelectionDraft,
-  persistSelectionDraft,
-  reconcileSelectionDraft,
-} from "./selectionDraft";
+import { reconcileDraftComments } from "./draftCommentAnchoring";
+import { loadDraftComments, persistDraftComments } from "./comments";
 import { COMMENT_DISPATCH_STATUS } from "./types";
-import type { AgentKind, Hunk, SelectionDraft, SessionState } from "./types";
+import type { AgentKind, DraftComment, Hunk, SessionState } from "./types";
 
 type ReviewStoreState = {
   data: SessionState | null;
-  selectionDraft: SelectionDraft | null;
+  draftComments: DraftComment[];
   loadError: string;
   busy: boolean;
   pollingStopped: boolean;
@@ -37,8 +34,8 @@ type ReviewStoreValue = {
     stageSelection: (hunkId: string, selection: string) => Promise<void>;
     discardHunk: (hunkId: string) => Promise<void>;
     updateDraftComment: (hunkId: string, comment: string) => void;
-    setSelectionDraft: (draft: SelectionDraft) => void;
-    clearSelectionDraft: () => void;
+    upsertDraftComment: (draft: DraftComment) => void;
+    removeDraftComment: (draftId: string) => void;
     saveComment: (hunkId: string, comment: string) => Promise<void>;
     setAgent: (agent: AgentKind) => Promise<void>;
   };
@@ -52,8 +49,8 @@ type ReviewStoreAction =
   | { type: "polling_stopped"; message: string }
   | { type: "timeout_toast_shown" }
   | { type: "draft_comment_updated"; hunkId: string; comment: string }
-  | { type: "selection_draft_set"; draft: SelectionDraft }
-  | { type: "selection_draft_cleared" };
+  | { type: "draft_comment_upserted"; draft: DraftComment }
+  | { type: "draft_comment_removed"; draftId: string };
 
 const ReviewStoreContext = createContext<ReviewStoreValue | null>(null);
 const EXPORT_SERVER_URL = "http://localhost:42000";
@@ -107,7 +104,7 @@ function reviewStoreReducer(state: ReviewStoreState, action: ReviewStoreAction):
       return {
         ...state,
         data: action.data,
-        selectionDraft: reconcileSelectionDraft(state.selectionDraft, action.data.hunks),
+        draftComments: reconcileDraftComments(state.draftComments, action.data.hunks),
         loadError: "",
         pollingStopped: false,
         timeoutToastShown: false,
@@ -136,15 +133,18 @@ function reviewStoreReducer(state: ReviewStoreState, action: ReviewStoreAction):
         ...state,
         data: updateHunkComment(state.data, action.hunkId, action.comment),
       };
-    case "selection_draft_set":
+    case "draft_comment_upserted":
       return {
         ...state,
-        selectionDraft: action.draft,
+        draftComments: [
+          ...state.draftComments.filter((draft) => draft.id !== action.draft.id),
+          action.draft,
+        ],
       };
-    case "selection_draft_cleared":
+    case "draft_comment_removed":
       return {
         ...state,
-        selectionDraft: null,
+        draftComments: state.draftComments.filter((draft) => draft.id !== action.draftId),
       };
     default:
       return state;
@@ -154,7 +154,7 @@ function reviewStoreReducer(state: ReviewStoreState, action: ReviewStoreAction):
 function initialReviewStoreState(): ReviewStoreState {
   return {
     data: null,
-    selectionDraft: loadSelectionDraft(getSessionId()),
+    draftComments: loadDraftComments(getSessionId()),
     loadError: "",
     busy: false,
     pollingStopped: false,
@@ -236,12 +236,12 @@ export function ReviewStoreProvider({ children }: { children: React.ReactNode })
     dispatch({ type: "draft_comment_updated", hunkId, comment });
   }
 
-  function setSelectionDraft(draft: SelectionDraft) {
-    dispatch({ type: "selection_draft_set", draft });
+  function upsertDraftComment(draft: DraftComment) {
+    dispatch({ type: "draft_comment_upserted", draft });
   }
 
-  function clearSelectionDraft() {
-    dispatch({ type: "selection_draft_cleared" });
+  function removeDraftComment(draftId: string) {
+    dispatch({ type: "draft_comment_removed", draftId });
   }
 
   useEffect(() => {
@@ -249,8 +249,8 @@ export function ReviewStoreProvider({ children }: { children: React.ReactNode })
   }, []);
 
   useEffect(() => {
-    persistSelectionDraft(getSessionId(), state.selectionDraft);
-  }, [state.selectionDraft]);
+    persistDraftComments(getSessionId(), state.draftComments);
+  }, [state.draftComments]);
 
   useEffect(() => {
     if (state.pollingStopped || !hasActiveDispatches(state.data)) {
@@ -274,8 +274,8 @@ export function ReviewStoreProvider({ children }: { children: React.ReactNode })
         stageSelection: async (hunkId, selection) => mutate(() => stageSelectionRequest(hunkId, selection)),
         discardHunk: async (hunkId) => mutate(() => discardHunkRequest(hunkId)),
         updateDraftComment,
-        setSelectionDraft,
-        clearSelectionDraft,
+        upsertDraftComment,
+        removeDraftComment,
         saveComment: async (hunkId, comment) => mutate(() => saveCommentRequest(hunkId, comment)),
         setAgent: async (agent) => mutate(() => updateAgentRequest(agent)),
       },

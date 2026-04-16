@@ -1,44 +1,30 @@
-import type { Dispatch, SetStateAction } from "react";
 import { COMMENT_DISPATCH_STATUS } from "../../types";
-import type { AgentKind, AgentOption, CommentDispatch } from "../../types";
-import type { DiffSegment } from "./diffSegments";
 import { AgentSelect } from "../AgentSelect";
-
-type InlineCommentSegment = Extract<DiffSegment, { type: "comment" }>;
+import { useHunkCommentContext, type InlineCommentSegment } from "./HunkCommentContext";
 
 type InlineCommentCardProps = {
   id?: string;
-  agents: AgentOption[];
-  selectedAgent: AgentKind;
   segment: InlineCommentSegment;
-  dispatch: CommentDispatch | undefined;
-  editing: boolean;
-  editingCommentValue: string;
-  onAgentChange: (agent: AgentKind) => void;
-  onToggleResolved: (index: number) => void;
-  onStartEditing: (index: number) => void;
-  onSave: (index: number) => void;
-  onDelete: (index: number) => void;
-  onEditingCommentValueChange: Dispatch<SetStateAction<string>>;
 };
 
 const HIDDEN_DISPATCH_STATUS = COMMENT_DISPATCH_STATUS.idle;
 
-export function InlineCommentCard({
-  id,
-  agents,
-  selectedAgent,
-  segment,
-  dispatch,
-  editing,
-  editingCommentValue,
-  onAgentChange,
-  onToggleResolved,
-  onStartEditing,
-  onSave,
-  onDelete,
-  onEditingCommentValueChange,
-}: InlineCommentCardProps) {
+export function InlineCommentCard({ id, segment }: InlineCommentCardProps) {
+  const {
+    agents,
+    selectedAgent,
+    onAgentChange,
+    getDispatch,
+    editingCommentIndex,
+    editingCommentValue,
+    onToggleResolved,
+    onStartEditing,
+    onSave,
+    onDelete,
+    onEditingCommentValueChange,
+  } = useHunkCommentContext();
+  const dispatch = getDispatch(segment.index);
+  const editing = editingCommentIndex === segment.index;
   const resolvedClassName = segment.resolved ? "resolved" : "";
   const showDispatch = dispatch && dispatch.status !== HIDDEN_DISPATCH_STATUS;
 

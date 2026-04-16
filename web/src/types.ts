@@ -37,12 +37,14 @@ export type Hunk = {
   removed_line_count: number;
 };
 
-export type SelectionDraft = {
+export type DraftComment = {
+  id: string;
   hunkId: string;
   filePath: string;
   header: string;
   selectedText: string;
   note: string;
+  lineNumberHint?: number;
 };
 
 export type SidebarComment = {

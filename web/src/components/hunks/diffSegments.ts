@@ -1,4 +1,5 @@
 import type { AnchoredComment } from "../../anchoredComments";
+import type { DraftComment } from "../../types";
 
 type CodeSegment = {
   type: "code";
@@ -13,13 +14,38 @@ type CommentSegment = {
   resolved: boolean;
 };
 
-export type DiffSegment = CodeSegment | CommentSegment;
+type DraftSegment = {
+  type: "draft";
+  draftId: string;
+};
+
+export type DiffSegment = CodeSegment | CommentSegment | DraftSegment;
 
 type CommentInsertion = {
   lineIndex: number;
   entry: AnchoredComment;
   index: number;
 };
+
+type DraftInsertion = {
+  lineIndex: number;
+  draft: DraftComment;
+};
+
+type SegmentInsertion =
+  | ({ kind: "comment" } & CommentInsertion)
+  | ({ kind: "draft" } & DraftInsertion);
+
+function collectSegmentInsertions(
+  lines: string[],
+  anchored: AnchoredComment[],
+  drafts: DraftComment[],
+): SegmentInsertion[] {
+  return [
+    ...collectCommentInsertions(lines, anchored).map((insertion) => ({ ...insertion, kind: "comment" as const })),
+    ...collectDraftInsertions(lines, drafts).map((insertion) => ({ ...insertion, kind: "draft" as const })),
+  ].sort((left, right) => left.lineIndex - right.lineIndex);
+}
 
 function findSelectionNeedle(selection: string): string | null {
   return selection
@@ -54,6 +80,28 @@ function collectCommentInsertions(lines: string[], anchored: AnchoredComment[]):
   return insertions.sort((left, right) => left.lineIndex - right.lineIndex);
 }
 
+function collectDraftInsertions(lines: string[], drafts: DraftComment[]): DraftInsertion[] {
+  const usedIndexes = new Set<number>();
+  const insertions: DraftInsertion[] = [];
+
+  drafts.forEach((draft) => {
+    const needle = findSelectionNeedle(draft.selectedText);
+    if (!needle) {
+      return;
+    }
+
+    const lineIndex = findInsertionLineIndex(lines, needle, usedIndexes);
+    if (lineIndex < 0) {
+      return;
+    }
+
+    usedIndexes.add(lineIndex);
+    insertions.push({ lineIndex, draft });
+  });
+
+  return insertions.sort((left, right) => left.lineIndex - right.lineIndex);
+}
+
 function pushCodeSegment(segments: DiffSegment[], text: string) {
   if (!text.trim()) {
     return;
@@ -72,13 +120,25 @@ function buildCommentSegment(insertion: CommentInsertion): CommentSegment {
   };
 }
 
-export function splitDiffIntoSegments(patch: string, anchored: AnchoredComment[]): DiffSegment[] {
-  if (anchored.length === 0) {
+function buildDraftSegment(insertion: DraftInsertion): DraftSegment {
+  return {
+    type: "draft",
+    draftId: insertion.draft.id,
+  };
+}
+
+export function splitDiffIntoSegments(
+  patch: string,
+  anchored: AnchoredComment[],
+  drafts: DraftComment[] = [],
+): DiffSegment[] {
+  if (anchored.length === 0 && drafts.length === 0) {
     return [{ type: "code", text: patch }];
   }
 
   const lines = patch.split("\n");
-  const insertions = collectCommentInsertions(lines, anchored);
+  const insertions = collectSegmentInsertions(lines, anchored, drafts);
+
   if (insertions.length === 0) {
     return [{ type: "code", text: patch }];
   }
@@ -88,7 +148,9 @@ export function splitDiffIntoSegments(patch: string, anchored: AnchoredComment[]
 
   for (const insertion of insertions) {
     pushCodeSegment(segments, lines.slice(cursor, insertion.lineIndex + 1).join("\n"));
-    segments.push(buildCommentSegment(insertion));
+    segments.push(
+      insertion.kind === "comment" ? buildCommentSegment(insertion) : buildDraftSegment(insertion),
+    );
     cursor = insertion.lineIndex + 1;
   }
 

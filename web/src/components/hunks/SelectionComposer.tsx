@@ -1,41 +1,37 @@
-import type { CSSProperties } from "react";
 import { AgentSelect } from "../AgentSelect";
-import type { AgentKind, AgentOption } from "../../types";
+import { useHunkCommentContext, type CSSProperties } from "./HunkCommentContext";
 
 type SelectionComposerProps = {
-  selectedText: string;
-  note: string;
-  agents: AgentOption[];
-  selectedAgent: AgentKind;
-  onNoteChange: (value: string) => void;
-  onAgentChange: (agent: AgentKind) => void;
-  onAdd: () => void;
-  onClear: () => void;
+  draftId: string;
   style?: CSSProperties;
 };
 
-export function SelectionComposer({
-  selectedText,
-  note,
-  agents,
-  selectedAgent,
-  onNoteChange,
-  onAgentChange,
-  onAdd,
-  onClear,
-  style,
-}: SelectionComposerProps) {
+export function SelectionComposer({ draftId, style }: SelectionComposerProps) {
+  const {
+    agents,
+    selectedAgent,
+    onAgentChange,
+    getDraft,
+    onDraftNoteChange,
+    onDraftAdd,
+    onDraftClear,
+  } = useHunkCommentContext();
+  const draft = getDraft(draftId);
+  if (!draft) {
+    return null;
+  }
+
   return (
     <div
       className={`anchor-composer ${style ? "anchor-composer-floating" : ""}`.trim()}
       style={style}
     >
       <div className="muted">Selected area</div>
-      <pre className="selection-preview">{selectedText}</pre>
+      <pre className="selection-preview">{draft.selectedText}</pre>
       <textarea
-        value={note}
+        value={draft.note}
         placeholder="Comment for this selected area..."
-        onChange={(event) => onNoteChange(event.target.value)}
+        onChange={(event) => onDraftNoteChange(draftId, event.target.value)}
         spellCheck={false}
       />
       <div className="toolbar">
@@ -45,10 +41,10 @@ export function SelectionComposer({
           onAgentChange={onAgentChange}
           className="agent-picker agent-picker-compact"
         />
-        <button className="primary" onClick={onAdd}>
+        <button className="primary" onClick={() => onDraftAdd(draftId)}>
           Add Comment
         </button>
-        <button onClick={onClear}>Close</button>
+        <button onClick={() => onDraftClear(draftId)}>Close</button>
       </div>
     </div>
   );
