@@ -70,16 +70,11 @@ type SidebarCommentsSectionProps = {
   onJumpToComment: (target: { filePath: string; hunkId: string; elementId: string }) => void;
 };
 
-export function SidebarCommentsSection({
-  comments,
-  onJumpToComment,
-}: SidebarCommentsSectionProps) {
+export function SidebarCommentsSection({ comments, onJumpToComment }: SidebarCommentsSectionProps) {
   return (
     <SidebarSection title="Comments">
       {comments.length > 0 ? (
-        comments.map((comment) => (
-          <SidebarCommentButton key={comment.id} comment={comment} onJumpToComment={onJumpToComment} />
-        ))
+        comments.map((comment) => <SidebarCommentButton key={comment.id} comment={comment} onJumpToComment={onJumpToComment} />)
       ) : (
         <div className="empty-section muted">No comments yet.</div>
       )}

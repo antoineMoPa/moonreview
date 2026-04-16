@@ -90,11 +90,11 @@ function FileAccordion({
             onAgentChange={onAgentChange}
           />
         ))}
-        {!readOnly && staged ? (
+        {!readOnly ? (
           <div className="file-accordion-footer">
             <span className="file-accordion-meta file-accordion-meta-footer">
               <button type="button" onClick={() => void actions.toggleStageFile(filePath, staged)}>
-                Unstage File
+                {staged ? "Unstage File" : "Stage File"}
               </button>
             </span>
           </div>

@@ -8,13 +8,47 @@ import { Header } from "./components/Header";
 import { LeftSidebar } from "./components/LeftSidebar";
 import { Hunks } from "./components/hunks/Hunks";
 import { ReviewStoreProvider, useReviewStore } from "./reviewStore";
-import type { AgentKind } from "./types";
+import type { AgentKind, Hunk } from "./types";
 
 const AGENT_STORAGE_KEY = "moonreview:selected-agent";
 
 function fileNameFromPath(filePath: string) {
   const segments = filePath.split("/");
   return segments[segments.length - 1] || filePath;
+}
+
+function filePathsInListOrder(hunks: Hunk[]) {
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const hunk of hunks) {
+    if (seen.has(hunk.file_path)) {
+      continue;
+    }
+    seen.add(hunk.file_path);
+    ordered.push(hunk.file_path);
+  }
+  return ordered;
+}
+
+function nextUnstagedFilePath(hunks: Hunk[], currentFilePath: string) {
+  const orderedPaths = filePathsInListOrder(hunks);
+  const currentIndex = orderedPaths.indexOf(currentFilePath);
+  if (currentIndex === -1) {
+    return null;
+  }
+
+  const unstagedFiles = new Set(
+    hunks.filter((hunk) => !hunk.staged).map((hunk) => hunk.file_path),
+  );
+
+  for (let offset = 1; offset < orderedPaths.length; offset += 1) {
+    const candidate = orderedPaths[(currentIndex + offset) % orderedPaths.length];
+    if (unstagedFiles.has(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
 }
 
 function AppContent() {
@@ -100,9 +134,9 @@ function AppContent() {
     }
 
     toast.success(`file ${pendingStageFile.fileName} fully staged`);
-    const nextUnstagedFile = data.hunks.find((hunk) => !hunk.staged)?.file_path ?? null;
-    if (nextUnstagedFile) {
-      setSelectedFilePath(nextUnstagedFile);
+    const nextFilePath = nextUnstagedFilePath(data.hunks, pendingStageFile.filePath);
+    if (nextFilePath) {
+      setSelectedFilePath(nextFilePath);
     }
     setPendingStageFile(null);
   }, [data, pendingStageFile]);
@@ -123,9 +157,9 @@ function AppContent() {
 
     if (hadUnstagedHunks && !hasUnstagedHunks) {
       toast.success(`file ${fileNameFromPath(selectedFilePath)} fully staged`);
-      const nextUnstagedFile = data.hunks.find((hunk) => !hunk.staged)?.file_path ?? null;
-      if (nextUnstagedFile && nextUnstagedFile !== selectedFilePath) {
-        setSelectedFilePath(nextUnstagedFile);
+      const nextFilePath = nextUnstagedFilePath(data.hunks, selectedFilePath);
+      if (nextFilePath && nextFilePath !== selectedFilePath) {
+        setSelectedFilePath(nextFilePath);
       }
       if (pendingStageFile?.filePath === selectedFilePath) {
         setPendingStageFile(null);
