@@ -140,12 +140,25 @@ export function LeftSidebar({
   } = useReviewStore();
   const sidebarFiles = useMemo(() => buildSidebarFiles(data), [data]);
   const sidebarComments = useMemo(() => buildSidebarComments(data), [data]);
+  const diffStats = useMemo(
+    () =>
+      data.hunks.reduce(
+        (sum, hunk) => ({
+          added: sum.added + hunk.added_line_count,
+          removed: sum.removed + hunk.removed_line_count,
+        }),
+        { added: 0, removed: 0 },
+      ),
+    [data],
+  );
 
   return (
     <aside className="left-sidebar">
       <SidebarSummary commentCount={sidebarComments.length} fileCount={sidebarFiles.length} />
       <SidebarFilesSection
         files={sidebarFiles}
+        addedCount={diffStats.added}
+        removedCount={diffStats.removed}
         activeFilePath={activeFilePath}
         readOnly={data.read_only}
         busy={busy}

@@ -3,14 +3,22 @@ import type { SidebarFileItem } from "./LeftSidebar";
 
 type SidebarSectionProps = {
   title: string;
+  addedCount?: number;
+  removedCount?: number;
   children: ReactNode;
 };
 
-function SidebarSection({ title, children }: SidebarSectionProps) {
+function SidebarSection({ title, addedCount, removedCount, children }: SidebarSectionProps) {
   return (
     <section className="sidebar-section">
       <div className="sidebar-section-head">
         <p>{title}</p>
+        {typeof addedCount === "number" && typeof removedCount === "number" ? (
+          <div className="diff-stats-summary" aria-label="Diff stats">
+            <span className="diff-stat diff-stat-added">++{addedCount}</span>
+            <span className="diff-stat diff-stat-removed">--{removedCount}</span>
+          </div>
+        ) : null}
       </div>
       <div className="sidebar-list">{children}</div>
     </section>
@@ -78,6 +86,8 @@ function SidebarFileButton({ file, active, readOnly, busy, onJumpToFile, onToggl
 
 type SidebarFilesSectionProps = {
   files: SidebarFileItem[];
+  addedCount: number;
+  removedCount: number;
   activeFilePath?: string | null;
   readOnly: boolean;
   busy: boolean;
@@ -87,6 +97,8 @@ type SidebarFilesSectionProps = {
 
 export function SidebarFilesSection({
   files,
+  addedCount,
+  removedCount,
   activeFilePath,
   readOnly,
   busy,
@@ -94,7 +106,7 @@ export function SidebarFilesSection({
   onToggleFileStage,
 }: SidebarFilesSectionProps) {
   return (
-    <SidebarSection title="Files">
+    <SidebarSection title="Files" addedCount={addedCount} removedCount={removedCount}>
       {files.map((file) => (
         <SidebarFileButton
           key={file.filePath}

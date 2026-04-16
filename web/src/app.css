@@ -29,6 +29,7 @@ header {
   width: min(1200px, calc(100vw - 2rem));
   margin: 0 auto;
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 1rem;
 }
@@ -390,10 +391,6 @@ select {
 .hunk-sections {
   display: grid;
   gap: 1rem;
-}
-
-.diff-stats-summary {
-  margin-bottom: 0.25rem;
 }
 
 .hunk-section {

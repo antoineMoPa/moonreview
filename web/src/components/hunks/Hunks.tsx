@@ -131,17 +131,6 @@ export function Hunks({
     () => stagedGroups.filter((group) => group.filePath === activeFilePath),
     [activeFilePath, stagedGroups],
   );
-  const diffStats = useMemo(
-    () =>
-      hunks.reduce(
-        (sum, hunk) => ({
-          added: sum.added + hunk.added_line_count,
-          removed: sum.removed + hunk.removed_line_count,
-        }),
-        { added: 0, removed: 0 },
-      ),
-    [hunks],
-  );
   const hunkTargets = useMemo(
     () =>
       new Map(
@@ -184,11 +173,6 @@ export function Hunks({
 
   return (
     <div className="hunk-sections">
-      <div className="diff-stats-summary" aria-label="Diff stats">
-        <span className="diff-stat diff-stat-added">++{diffStats.added}</span>
-        <span className="diff-stat diff-stat-removed">--{diffStats.removed}</span>
-      </div>
-
       <section className="panel panel-plain hunk-section">
         <button className="hunk-section-toggle hunk-section-toggle-large" onClick={() => setUnstagedOpen((open) => !open)}>
           <h2>Unstaged</h2>
