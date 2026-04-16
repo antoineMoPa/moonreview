@@ -8,6 +8,10 @@ moonreview is a tiny local code review UI for git.
 
 It shows git hunks, lets you comment, stage or unstage them individually. Comments can either be sent to your local claude or codex (using your currently signed-in account) or collected in one big review text for copy pasting in your favourite AI tool.
 
+## Requirements
+
+- [Rust](https://www.rust-lang.org/tools/install)
+
 ## Installation / Usage
 
 ```bash
