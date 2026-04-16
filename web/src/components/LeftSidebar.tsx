@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useReviewStore } from "../reviewStore";
 import { COMMENT_DISPATCH_STATUS } from "../types";
-import type { CommentDispatchStatus, SessionState, SidebarComment } from "../types";
+import type { CommentDispatchStatus, FileChangeKind, SessionState, SidebarComment } from "../types";
 import { SidebarCommentsSection } from "./SidebarCommentsSection";
 import { SidebarFilesSection } from "./SidebarFilesSection";
 
@@ -16,6 +16,7 @@ export type FileStageStatus = (typeof FILE_STAGE_STATUS)[keyof typeof FILE_STAGE
 export type SidebarFileItem = {
   filePath: string;
   fileName: string;
+  changeKind: FileChangeKind;
   status: FileStageStatus;
   addedLineCount: number;
   removedLineCount: number;
@@ -45,11 +46,16 @@ function fileNameFromPath(filePath: string) {
   return segments[segments.length - 1] || filePath;
 }
 
+function mergeFileChangeKind(left: FileChangeKind, right: FileChangeKind): FileChangeKind {
+  return left === right ? left : "modified";
+}
+
 function buildSidebarFiles(data: SessionState): SidebarFileItem[] {
   const grouped = new Map<string, SidebarFileItem>();
   for (const hunk of data.hunks) {
     const existing = grouped.get(hunk.file_path);
     if (existing) {
+      existing.changeKind = mergeFileChangeKind(existing.changeKind, hunk.change_kind);
       existing.addedLineCount += hunk.added_line_count;
       existing.removedLineCount += hunk.removed_line_count;
       if (
@@ -63,6 +69,7 @@ function buildSidebarFiles(data: SessionState): SidebarFileItem[] {
     grouped.set(hunk.file_path, {
       filePath: hunk.file_path,
       fileName: fileNameFromPath(hunk.file_path),
+      changeKind: hunk.change_kind,
       status: hunk.staged ? FILE_STAGE_STATUS.staged : FILE_STAGE_STATUS.unstaged,
       addedLineCount: hunk.added_line_count,
       removedLineCount: hunk.removed_line_count,

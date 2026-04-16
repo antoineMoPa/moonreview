@@ -240,6 +240,7 @@ async fn session_state(
                     reviewed: session.reviewed.contains(&hunk.id),
                     id: hunk.id,
                     file_path: hunk.file_path,
+                    change_kind: hunk.change_kind,
                     header: hunk.header,
                     staged: hunk.staged,
                     comment,

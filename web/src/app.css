@@ -190,6 +190,26 @@ main {
   font-size: 11px;
 }
 
+.sidebar-link-prefix {
+  display: inline-block;
+  font-weight: 800;
+  width: 0;
+  overflow: visible;
+  transform: translateX(-1ch);
+}
+
+.sidebar-link-prefix-added {
+  transform: translateX(-1.3ch);
+}
+
+.sidebar-link-name-added {
+  color: #247045;
+}
+
+.sidebar-link-name-deleted {
+  color: #a12d22;
+}
+
 .sidebar-comment-link {
   display: grid;
   justify-content: stretch;

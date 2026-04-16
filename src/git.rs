@@ -8,7 +8,7 @@ use anyhow::{Context, Result, anyhow, bail};
 
 use crate::{
     agent::ChildExt,
-    api::{DiffHunk, DiffTarget, stable_id},
+    api::{DiffHunk, DiffTarget, FileChangeKind, stable_id},
 };
 
 pub(crate) fn canonicalize_repo(path: impl AsRef<Path>) -> Result<PathBuf> {
@@ -104,6 +104,7 @@ fn parse_diff(diff: &str, staged: bool) -> Result<Vec<DiffHunk>> {
     let mut hunks = Vec::new();
     for section in split_diff_sections(diff) {
         let file_path = parse_file_path(&section).unwrap_or_else(|| "unknown".to_string());
+        let change_kind = parse_change_kind(&section);
         let mut prelude = Vec::new();
         let mut idx = 0usize;
 
@@ -131,6 +132,7 @@ fn parse_diff(diff: &str, staged: bool) -> Result<Vec<DiffHunk>> {
             hunks.push(DiffHunk {
                 id,
                 file_path: file_path.clone(),
+                change_kind,
                 header,
                 patch,
                 staged,
@@ -171,6 +173,21 @@ fn parse_file_path(section: &[String]) -> Option<String> {
         line.strip_prefix("diff --git a/")
             .and_then(|rest| rest.split_once(" b/").map(|(_, right)| right.to_string()))
     })
+}
+
+fn parse_change_kind(section: &[String]) -> FileChangeKind {
+    let has_new_file = section.iter().any(|line| line.starts_with("new file mode "));
+    let has_deleted_file = section.iter().any(|line| line.starts_with("deleted file mode "));
+    let added_from_dev_null = section.iter().any(|line| line == "--- /dev/null");
+    let deleted_to_dev_null = section.iter().any(|line| line == "+++ /dev/null");
+
+    if has_new_file || added_from_dev_null {
+        FileChangeKind::Added
+    } else if has_deleted_file || deleted_to_dev_null {
+        FileChangeKind::Deleted
+    } else {
+        FileChangeKind::Modified
+    }
 }
 
 fn list_untracked_files(repo_path: &Path) -> Result<Vec<String>> {

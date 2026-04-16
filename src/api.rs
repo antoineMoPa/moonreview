@@ -67,6 +67,7 @@ pub(crate) struct SessionPayload {
 pub(crate) struct HunkView {
     pub(crate) id: String,
     pub(crate) file_path: String,
+    pub(crate) change_kind: FileChangeKind,
     pub(crate) header: String,
     pub(crate) staged: bool,
     pub(crate) reviewed: bool,
@@ -82,6 +83,15 @@ pub(crate) struct HunkView {
 pub(crate) struct HunkCommentContext {
     pub(crate) file_path: String,
     pub(crate) header: String,
+}
+
+#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum FileChangeKind {
+    Added,
+    Deleted,
+    #[default]
+    Modified,
 }
 
 #[derive(Serialize)]
@@ -189,6 +199,7 @@ pub(crate) struct SelectionRequest {
 pub(crate) struct DiffHunk {
     pub(crate) id: String,
     pub(crate) file_path: String,
+    pub(crate) change_kind: FileChangeKind,
     pub(crate) header: String,
     pub(crate) patch: String,
     pub(crate) staged: bool,

@@ -11,6 +11,8 @@ export const COMMENT_DISPATCH_STATUS = {
 export type CommentDispatchStatus =
   (typeof COMMENT_DISPATCH_STATUS)[keyof typeof COMMENT_DISPATCH_STATUS];
 
+export type FileChangeKind = "added" | "deleted" | "modified";
+
 export type AgentOption = {
   kind: AgentKind;
   label: string;
@@ -26,6 +28,7 @@ export type CommentDispatch = {
 export type Hunk = {
   id: string;
   file_path: string;
+  change_kind: FileChangeKind;
   header: string;
   staged: boolean;
   reviewed: boolean;

@@ -33,6 +33,16 @@ function statusLabel(file: SidebarFileItem) {
   return file.status === "staged" ? "Staged" : "Unstaged";
 }
 
+function filePrefix(file: SidebarFileItem) {
+  if (file.changeKind === "added") {
+    return "+";
+  }
+  if (file.changeKind === "deleted") {
+    return "-";
+  }
+  return "";
+}
+
 function SidebarFileButton({ file, active, readOnly, busy, onJumpToFile, onToggleFileStage }: SidebarFileButtonProps) {
   return (
     <div className="sidebar-link" title={file.filePath}>
@@ -41,7 +51,12 @@ function SidebarFileButton({ file, active, readOnly, busy, onJumpToFile, onToggl
         type="button"
         onClick={() => onJumpToFile(file.filePath)}
       >
-        <span className="sidebar-link-name">{file.fileName}</span>
+        <span className={`sidebar-link-name sidebar-link-name-${file.changeKind}`.trim()}>
+          <span className={`sidebar-link-prefix sidebar-link-prefix-${file.changeKind}`.trim()}>
+            {filePrefix(file)}
+          </span>
+          {file.fileName}
+        </span>
       </button>
       <span className="sidebar-link-meta">
         <button
