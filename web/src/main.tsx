@@ -266,6 +266,7 @@ function AppContent() {
         <div className="review-layout">
           <LeftSidebar
             data={data}
+            snoozedFiles={snoozedFileSet}
             activeFilePath={selectedFilePath}
             onJumpToFile={jumpToFile}
             onJumpToComment={jumpToComment}

@@ -59,7 +59,15 @@ function SidebarFileButton({ file, active, readOnly, busy, onJumpToFile, onToggl
         type="button"
         onClick={() => onJumpToFile(file.filePath)}
       >
-        <span className={`sidebar-link-name sidebar-link-name-${file.changeKind}`.trim()}>
+        <span
+          className={[
+            "sidebar-link-name",
+            `sidebar-link-name-${file.changeKind}`,
+            file.snoozed ? "sidebar-link-name-snoozed" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+        >
           <span className={`sidebar-link-prefix sidebar-link-prefix-${file.changeKind}`.trim()}>
             {filePrefix(file)}
           </span>
@@ -80,6 +88,49 @@ function SidebarFileButton({ file, active, readOnly, busy, onJumpToFile, onToggl
           {statusLabel(file)}
         </button>
       </span>
+    </div>
+  );
+}
+
+type SidebarFileGroupProps = {
+  title: string;
+  files: SidebarFileItem[];
+  activeFilePath?: string | null;
+  readOnly: boolean;
+  busy: boolean;
+  onJumpToFile: (filePath: string) => void;
+  onToggleFileStage: (file: SidebarFileItem) => void;
+};
+
+function SidebarFileGroup({
+  title,
+  files,
+  activeFilePath,
+  readOnly,
+  busy,
+  onJumpToFile,
+  onToggleFileStage,
+}: SidebarFileGroupProps) {
+  if (files.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="sidebar-file-group">
+      <p className="sidebar-file-group-title">{title}</p>
+      <div className="sidebar-list">
+        {files.map((file) => (
+          <SidebarFileButton
+            key={file.filePath}
+            file={file}
+            active={file.filePath === activeFilePath}
+            readOnly={readOnly}
+            busy={busy}
+            onJumpToFile={onJumpToFile}
+            onToggleFileStage={onToggleFileStage}
+          />
+        ))}
+      </div>
     </div>
   );
 }
@@ -105,19 +156,39 @@ export function SidebarFilesSection({
   onJumpToFile,
   onToggleFileStage,
 }: SidebarFilesSectionProps) {
+  const unstagedFiles = files.filter((file) => file.status !== "staged" && !file.snoozed);
+  const stagedFiles = files.filter((file) => file.status === "staged");
+  const snoozedFiles = files.filter((file) => file.snoozed);
+
   return (
     <SidebarSection title="Files" addedCount={addedCount} removedCount={removedCount}>
-      {files.map((file) => (
-        <SidebarFileButton
-          key={file.filePath}
-          file={file}
-          active={file.filePath === activeFilePath}
-          readOnly={readOnly}
-          busy={busy}
-          onJumpToFile={onJumpToFile}
-          onToggleFileStage={onToggleFileStage}
-        />
-      ))}
+      <SidebarFileGroup
+        title="Unstaged"
+        files={unstagedFiles}
+        activeFilePath={activeFilePath}
+        readOnly={readOnly}
+        busy={busy}
+        onJumpToFile={onJumpToFile}
+        onToggleFileStage={onToggleFileStage}
+      />
+      <SidebarFileGroup
+        title="Staged"
+        files={stagedFiles}
+        activeFilePath={activeFilePath}
+        readOnly={readOnly}
+        busy={busy}
+        onJumpToFile={onJumpToFile}
+        onToggleFileStage={onToggleFileStage}
+      />
+      <SidebarFileGroup
+        title="Snoozed"
+        files={snoozedFiles}
+        activeFilePath={activeFilePath}
+        readOnly={readOnly}
+        busy={busy}
+        onJumpToFile={onJumpToFile}
+        onToggleFileStage={onToggleFileStage}
+      />
     </SidebarSection>
   );
 }

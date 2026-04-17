@@ -17,6 +17,7 @@ export type SidebarFileItem = {
   filePath: string;
   fileName: string;
   changeKind: FileChangeKind;
+  snoozed: boolean;
   status: FileStageStatus;
   addedLineCount: number;
   removedLineCount: number;
@@ -35,6 +36,7 @@ export type SidebarCommentItem = {
 
 type LeftSidebarProps = {
   data: SessionState;
+  snoozedFiles: Set<string>;
   onJumpToFile: (filePath: string) => void;
   onJumpToComment: (target: { filePath: string; hunkId: string; elementId: string }) => void;
   activeFilePath?: string | null;
@@ -50,7 +52,7 @@ function mergeFileChangeKind(left: FileChangeKind, right: FileChangeKind): FileC
   return left === right ? left : "modified";
 }
 
-function buildSidebarFiles(data: SessionState): SidebarFileItem[] {
+function buildSidebarFiles(data: SessionState, snoozedFiles: Set<string>): SidebarFileItem[] {
   const grouped = new Map<string, SidebarFileItem>();
   for (const hunk of data.hunks) {
     const existing = grouped.get(hunk.file_path);
@@ -70,6 +72,7 @@ function buildSidebarFiles(data: SessionState): SidebarFileItem[] {
       filePath: hunk.file_path,
       fileName: fileNameFromPath(hunk.file_path),
       changeKind: hunk.change_kind,
+      snoozed: snoozedFiles.has(hunk.file_path),
       status: hunk.staged ? FILE_STAGE_STATUS.staged : FILE_STAGE_STATUS.unstaged,
       addedLineCount: hunk.added_line_count,
       removedLineCount: hunk.removed_line_count,
@@ -129,6 +132,7 @@ function SidebarSummary({ commentCount, fileCount }: SidebarSummaryProps) {
 
 export function LeftSidebar({
   data,
+  snoozedFiles,
   onJumpToFile,
   onJumpToComment,
   activeFilePath,
@@ -138,7 +142,7 @@ export function LeftSidebar({
     state: { busy },
     actions,
   } = useReviewStore();
-  const sidebarFiles = useMemo(() => buildSidebarFiles(data), [data]);
+  const sidebarFiles = useMemo(() => buildSidebarFiles(data, snoozedFiles), [data, snoozedFiles]);
   const sidebarComments = useMemo(() => buildSidebarComments(data), [data]);
   const diffStats = useMemo(
     () =>
