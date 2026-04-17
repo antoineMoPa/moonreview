@@ -30,7 +30,20 @@ function filePathsInListOrder(hunks: Hunk[]) {
   return ordered;
 }
 
-function nextUnstagedFilePath(hunks: Hunk[], currentFilePath: string) {
+function firstReviewFilePath(hunks: Hunk[], snoozedFiles: Set<string>) {
+  const orderedPaths = filePathsInListOrder(hunks);
+  const unstagedFiles = new Set(hunks.filter((hunk) => !hunk.staged).map((hunk) => hunk.file_path));
+
+  for (const filePath of orderedPaths) {
+    if (unstagedFiles.has(filePath) && !snoozedFiles.has(filePath)) {
+      return filePath;
+    }
+  }
+
+  return null;
+}
+
+function nextReviewFilePath(hunks: Hunk[], currentFilePath: string, snoozedFiles: Set<string>) {
   const orderedPaths = filePathsInListOrder(hunks);
   const currentIndex = orderedPaths.indexOf(currentFilePath);
   if (currentIndex === -1) {
@@ -43,7 +56,7 @@ function nextUnstagedFilePath(hunks: Hunk[], currentFilePath: string) {
 
   for (let offset = 1; offset < orderedPaths.length; offset += 1) {
     const candidate = orderedPaths[(currentIndex + offset) % orderedPaths.length];
-    if (unstagedFiles.has(candidate)) {
+    if (unstagedFiles.has(candidate) && !snoozedFiles.has(candidate)) {
       return candidate;
     }
   }
@@ -58,12 +71,14 @@ function AppContent() {
   } = useReviewStore();
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
   const [pendingStageFile, setPendingStageFile] = useState<{ filePath: string; fileName: string } | null>(null);
+  const [snoozedFiles, setSnoozedFiles] = useState<string[]>([]);
   const previousDataRef = useRef<typeof data>(null);
   const [activeJumpTarget, setActiveJumpTarget] = useState<{
     filePath?: string | null;
     hunkId?: string | null;
     elementId: string;
   } | null>(null);
+  const snoozedFileSet = new Set(snoozedFiles);
 
   useEffect(() => {
     if (!data) {
@@ -93,10 +108,20 @@ function AppContent() {
       return;
     }
 
-    const fallbackFilePath =
-      data.hunks.find((hunk) => !hunk.staged)?.file_path ?? data.hunks[0]?.file_path ?? null;
+    const fallbackFilePath = firstReviewFilePath(data.hunks, snoozedFileSet) ?? data.hunks[0]?.file_path ?? null;
     setSelectedFilePath(fallbackFilePath);
-  }, [data, selectedFilePath]);
+  }, [data, selectedFilePath, snoozedFiles]);
+
+  useEffect(() => {
+    if (!data) {
+      return;
+    }
+
+    const activePaths = new Set(
+      data.hunks.filter((hunk) => !hunk.staged).map((hunk) => hunk.file_path),
+    );
+    setSnoozedFiles((current) => current.filter((filePath) => activePaths.has(filePath)));
+  }, [data]);
 
   useEffect(() => {
     if (!activeJumpTarget) {
@@ -134,12 +159,12 @@ function AppContent() {
     }
 
     toast.success(`file ${pendingStageFile.fileName} fully staged`);
-    const nextFilePath = nextUnstagedFilePath(data.hunks, pendingStageFile.filePath);
+    const nextFilePath = nextReviewFilePath(data.hunks, pendingStageFile.filePath, snoozedFileSet);
     if (nextFilePath) {
-      setSelectedFilePath(nextFilePath);
+      navigateToFile(nextFilePath);
     }
     setPendingStageFile(null);
-  }, [data, pendingStageFile]);
+  }, [data, pendingStageFile, snoozedFiles]);
 
   useEffect(() => {
     if (!data || !selectedFilePath) {
@@ -157,9 +182,9 @@ function AppContent() {
 
     if (hadUnstagedHunks && !hasUnstagedHunks) {
       toast.success(`file ${fileNameFromPath(selectedFilePath)} fully staged`);
-      const nextFilePath = nextUnstagedFilePath(data.hunks, selectedFilePath);
+      const nextFilePath = nextReviewFilePath(data.hunks, selectedFilePath, snoozedFileSet);
       if (nextFilePath && nextFilePath !== selectedFilePath) {
-        setSelectedFilePath(nextFilePath);
+        navigateToFile(nextFilePath);
       }
       if (pendingStageFile?.filePath === selectedFilePath) {
         setPendingStageFile(null);
@@ -167,14 +192,15 @@ function AppContent() {
     }
 
     previousDataRef.current = data;
-  }, [data, pendingStageFile, selectedFilePath]);
+  }, [data, pendingStageFile, selectedFilePath, snoozedFiles]);
 
   function handleAgentChange(agent: AgentKind) {
     window.localStorage.setItem(AGENT_STORAGE_KEY, agent);
     void actions.setAgent(agent);
   }
 
-  function jumpToFile(filePath: string) {
+  function navigateToFile(filePath: string) {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     setSelectedFilePath(filePath);
     setActiveJumpTarget({
       filePath,
@@ -183,9 +209,30 @@ function AppContent() {
     });
   }
 
+  function jumpToFile(filePath: string) {
+    navigateToFile(filePath);
+  }
+
   function jumpToComment(target: { filePath: string; hunkId: string; elementId: string }) {
     setSelectedFilePath(target.filePath);
     setActiveJumpTarget(target);
+  }
+
+  function snoozeFile(filePath: string) {
+    if (!data) {
+      return;
+    }
+
+    const nextSnoozedFiles = new Set(snoozedFileSet);
+    nextSnoozedFiles.add(filePath);
+    setSnoozedFiles([...nextSnoozedFiles]);
+
+    const nextFilePath = nextReviewFilePath(data.hunks, filePath, nextSnoozedFiles);
+    if (!nextFilePath || nextFilePath === filePath) {
+      return;
+    }
+
+    navigateToFile(nextFilePath);
   }
 
   if (!data) {
@@ -233,6 +280,7 @@ function AppContent() {
               agents={data.available_agents}
               selectedAgent={data.selected_agent}
               onAgentChange={handleAgentChange}
+              onSnoozeFile={snoozeFile}
               selectedFilePath={selectedFilePath}
               targetFilePath={activeJumpTarget?.filePath ?? null}
               targetHunkId={activeJumpTarget?.hunkId ?? null}
