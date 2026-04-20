@@ -34,6 +34,14 @@ header {
   gap: 1rem;
 }
 
+.header-repo-name {
+  color: var(--muted);
+  font-size: 0.95rem;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  text-align: right;
+}
+
 h1, h2, h3 {
   margin: 0;
   font-weight: 700;

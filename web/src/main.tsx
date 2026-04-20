@@ -261,7 +261,7 @@ function AppContent() {
   return (
     <>
       <Toaster closeButton position="bottom-right" richColors />
-      <Header />
+      <Header repoName={data.repo_name} />
       <main>
         <div className="review-layout">
           <LeftSidebar
