@@ -12,7 +12,7 @@ use reqwest::blocking::Client;
 
 use crate::{
     api::{DiffTarget, HOST, OpenSessionRequest, PORT, SERVER_URL, SessionOpened},
-    git::{canonicalize_repo, parse_review_target},
+    git::{canonicalize_repo, list_changed_submodule_repos, parse_review_target},
     server,
 };
 
@@ -82,6 +82,27 @@ fn launch_review_with_foreground_server(repo_path: PathBuf, diff_target: DiffTar
 }
 
 fn open_review_session(repo_path: &Path, diff_target: DiffTarget) -> Result<()> {
+    let extra_repo_paths = if diff_target.base.is_none() {
+        list_changed_submodule_repos(repo_path)?
+    } else {
+        Vec::new()
+    };
+
+    let mut opened_urls = Vec::new();
+    opened_urls.push(open_review_url_for_session(repo_path, &diff_target)?);
+    for submodule_path in extra_repo_paths {
+        opened_urls.push(open_review_url_for_session(&submodule_path, &diff_target)?);
+    }
+
+    for url in &opened_urls {
+        webbrowser::open(url).context("failed to open browser")?;
+        println!("Opened {url}");
+    }
+
+    Ok(())
+}
+
+fn open_review_url_for_session(repo_path: &Path, diff_target: &DiffTarget) -> Result<String> {
     let client = Client::builder()
         .timeout(Duration::from_secs(3))
         .build()
@@ -91,7 +112,7 @@ fn open_review_session(repo_path: &Path, diff_target: DiffTarget) -> Result<()> 
         .post(format!("{SERVER_URL}/api/session/open"))
         .json(&OpenSessionRequest {
             repo_path: repo_path.display().to_string(),
-            diff_target: Some(diff_target),
+            diff_target: Some(diff_target.clone()),
         })
         .send()
         .context("failed to connect to review server")?
@@ -100,10 +121,7 @@ fn open_review_session(repo_path: &Path, diff_target: DiffTarget) -> Result<()> 
         .json()
         .context("failed to decode session response")?;
 
-    let url = format!("{SERVER_URL}/review/{}", opened.session_id);
-    webbrowser::open(&url).context("failed to open browser")?;
-    println!("Opened {url}");
-    Ok(())
+    Ok(format!("{SERVER_URL}/review/{}", opened.session_id))
 }
 
 fn parse_cli_args(args: Vec<String>) -> Result<CliCommand> {

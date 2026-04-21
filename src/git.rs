@@ -27,10 +27,30 @@ pub(crate) fn canonicalize_repo(path: impl AsRef<Path>) -> Result<PathBuf> {
         }
     }
 
-    bail!(
-        "{} is not inside a git repository",
-        original_path.display()
-    )
+    bail!("{} is not inside a git repository", original_path.display())
+}
+
+pub(crate) fn list_changed_submodule_repos(repo_path: &Path) -> Result<Vec<PathBuf>> {
+    let submodule_paths = run_git(repo_path, &["submodule", "status", "--recursive"])?
+        .lines()
+        .filter_map(parse_submodule_status_path)
+        .map(|relative_path| repo_path.join(relative_path))
+        .collect::<Vec<_>>();
+
+    let mut changed = Vec::new();
+    for submodule_path in submodule_paths {
+        let status = run_git(
+            &submodule_path,
+            &["status", "--short", "--ignore-submodules=none"],
+        )?;
+        if !status.trim().is_empty() {
+            changed.push(canonicalize_repo(&submodule_path)?);
+        }
+    }
+
+    changed.sort();
+    changed.dedup();
+    Ok(changed)
 }
 
 pub(crate) fn collect_hunks(repo_path: &Path, diff_target: &DiffTarget) -> Result<Vec<DiffHunk>> {
@@ -75,11 +95,7 @@ pub(crate) fn collect_hunks(repo_path: &Path, diff_target: &DiffTarget) -> Resul
             "/dev/null",
             &path,
         ];
-        let diff = run_git_allow_status(
-            repo_path,
-            &untracked_args,
-            &[0, 1],
-        )?;
+        let diff = run_git_allow_status(repo_path, &untracked_args, &[0, 1])?;
         hunks.extend(parse_diff(&diff, false)?);
     }
     Ok(hunks)
@@ -176,8 +192,12 @@ fn parse_file_path(section: &[String]) -> Option<String> {
 }
 
 fn parse_change_kind(section: &[String]) -> FileChangeKind {
-    let has_new_file = section.iter().any(|line| line.starts_with("new file mode "));
-    let has_deleted_file = section.iter().any(|line| line.starts_with("deleted file mode "));
+    let has_new_file = section
+        .iter()
+        .any(|line| line.starts_with("new file mode "));
+    let has_deleted_file = section
+        .iter()
+        .any(|line| line.starts_with("deleted file mode "));
     let added_from_dev_null = section.iter().any(|line| line == "--- /dev/null");
     let deleted_to_dev_null = section.iter().any(|line| line == "+++ /dev/null");
 
@@ -199,6 +219,21 @@ fn list_untracked_files(repo_path: &Path) -> Result<Vec<String>> {
             .map(ToOwned::to_owned)
             .collect(),
     )
+}
+
+fn parse_submodule_status_path(line: &str) -> Option<&str> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let rest = trimmed[1..].trim_start();
+    let (_, path_and_rest) = rest.split_once(' ')?;
+    let path = path_and_rest
+        .split_once(" (")
+        .map_or(path_and_rest, |(path, _)| path);
+    let path = path.trim();
+    if path.is_empty() { None } else { Some(path) }
 }
 
 fn run_git_allow_status(repo_path: &Path, args: &[&str], allowed: &[i32]) -> Result<String> {
@@ -471,6 +506,18 @@ mod tests {
         let error = canonicalize_repo(&dir).expect_err("expected resolution failure");
 
         assert!(error.to_string().contains("is not inside a git repository"));
+    }
+
+    #[test]
+    fn parse_submodule_status_path_handles_plain_and_branch_lines() {
+        assert_eq!(
+            super::parse_submodule_status_path(" 3f4a1c2 modules/libfoo"),
+            Some("modules/libfoo")
+        );
+        assert_eq!(
+            super::parse_submodule_status_path("+3f4a1c2 modules/libfoo (heads/main)"),
+            Some("modules/libfoo")
+        );
     }
 }
 
