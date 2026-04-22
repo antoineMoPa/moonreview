@@ -1,5 +1,6 @@
 use std::{
     env,
+    fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
@@ -109,6 +110,30 @@ pub(crate) fn current_branch_name(repo_path: &Path) -> Result<Option<String>> {
     } else {
         Ok(Some(branch.to_string()))
     }
+}
+
+pub(crate) fn read_repo_file(repo_path: &Path, file_path: &str) -> Result<String> {
+    if file_path.trim().is_empty() {
+        bail!("file path cannot be empty");
+    }
+
+    let candidate = repo_path.join(file_path);
+    if let Ok(resolved) = candidate.canonicalize() {
+        if !resolved.starts_with(repo_path) {
+            bail!("file path is outside the repository");
+        }
+
+        return fs::read_to_string(&resolved)
+            .with_context(|| format!("failed to read {}", resolved.display()));
+    }
+
+    let head_spec = format!("HEAD:{file_path}");
+    let content = run_git_allow_status(repo_path, &["show", &head_spec], &[0, 128])?;
+    if content.trim().is_empty() {
+        bail!("file is not available in the working tree or HEAD");
+    }
+
+    Ok(content)
 }
 
 fn run_target_diff(repo_path: &Path, base: &str, pathspec: Option<&str>) -> Result<String> {

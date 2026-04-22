@@ -78,3 +78,8 @@ export type SessionState = {
 export type PatchPayload = {
   patch: string;
 };
+
+export type FileContentPayload = {
+  file_path: string;
+  content: string;
+};

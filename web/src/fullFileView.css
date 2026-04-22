@@ -1,0 +1,79 @@
+.full-file-view {
+  width: min(1200px, calc(100vw - 2rem));
+  margin: 0 auto;
+}
+
+.full-file-view-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.full-file-code {
+  --full-file-font-size: 0.9rem;
+  --full-file-line-height: 1.35;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: #fffdf9;
+  color: var(--code);
+  font-family: monospace;
+  font-size: var(--full-file-font-size);
+  line-height: var(--full-file-line-height);
+}
+
+.full-file-gutter {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  border-right: 1px solid rgba(49, 42, 34, 0.08);
+  background: rgba(49, 42, 34, 0.04);
+}
+
+.full-file-line-target {
+  background: rgba(183, 82, 45, 0.08);
+}
+
+.full-file-line-number {
+  display: block;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: var(--full-file-font-size);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--full-file-line-height);
+  text-align: right;
+  text-decoration: none;
+  padding: 0 0.6rem 0 0.35rem;
+}
+
+.full-file-line-number:hover {
+  color: var(--accent);
+}
+
+.full-file-code-block {
+  width: auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0.05rem 0.75rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+  white-space: pre;
+  font-family: inherit;
+  font-size: var(--full-file-font-size);
+  line-height: var(--full-file-line-height);
+}
+
+.full-file-code-block .hljs {
+  display: block;
+  background: transparent;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  padding: 0;
+}

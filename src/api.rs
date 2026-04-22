@@ -163,6 +163,12 @@ pub(crate) struct PatchPayload {
     pub(crate) patch: String,
 }
 
+#[derive(Serialize)]
+pub(crate) struct FileContentPayload {
+    pub(crate) file_path: String,
+    pub(crate) content: String,
+}
+
 #[derive(Serialize, Deserialize)]
 pub(crate) struct OpenSessionRequest {
     pub(crate) repo_path: String,
@@ -176,6 +182,11 @@ pub(crate) struct HunkRequest {
 
 #[derive(Deserialize)]
 pub(crate) struct FileRequest {
+    pub(crate) file_path: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct FileQuery {
     pub(crate) file_path: String,
 }
 

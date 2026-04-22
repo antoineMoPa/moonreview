@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import hljs from "highlight.js/lib/core";
 import diff from "highlight.js/lib/languages/diff";
-import { fetchHunkPatch } from "../../api";
+import { buildFullFileUrl, fetchHunkPatch } from "../../api";
 import {
   buildAnchoredCommentValue,
   parseAnchoredComments,
@@ -71,6 +71,10 @@ function parseHunkHeader(line: string): { oldStart: number; newStart: number } |
     oldStart: Number.parseInt(match[1], 10),
     newStart: Number.parseInt(match[2], 10),
   };
+}
+
+function hunkStartLine(header: string): number | null {
+  return parseHunkHeader(header)?.newStart ?? null;
 }
 
 function buildDiffLines(text: string): DiffLine[] {
@@ -375,6 +379,14 @@ export function HunkCard({ hunk, agents, selectedAgent, onAgentChange }: HunkCar
                 : `Expand Diff (${hunk.patch_line_count} lines)`}
           </button>
         ) : null}
+        <a
+          className="hunk-full-file-link"
+          href={buildFullFileUrl(hunk.file_path, hunkStartLine(hunk.header))}
+          target="_blank"
+          rel="noreferrer"
+        >
+          View full file
+        </a>
       </div>
 
       {selectedText && !composerOpen && selectionPosition ? (

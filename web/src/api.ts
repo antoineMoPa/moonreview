@@ -1,6 +1,16 @@
-import type { AgentKind, PatchPayload, SessionState } from "./types";
+import type { AgentKind, FileContentPayload, PatchPayload, SessionState } from "./types";
 
-const sessionId = window.location.pathname.split("/").pop() ?? "";
+function parseSessionId(pathname: string): string {
+  const segments = pathname.split("/").filter(Boolean);
+  const reviewIndex = segments.indexOf("review");
+  if (reviewIndex === -1) {
+    return "";
+  }
+
+  return segments[reviewIndex + 1] ?? "";
+}
+
+const sessionId = parseSessionId(window.location.pathname);
 
 export class ApiError extends Error {
   readonly isTimeout: boolean;
@@ -44,6 +54,17 @@ export function fetchSessionState(): Promise<SessionState> {
 
 export function fetchHunkPatch(hunkId: string): Promise<PatchPayload> {
   return request<PatchPayload>(`/api/session/${sessionId}/hunk/${hunkId}`);
+}
+
+export function fetchFileContent(filePath: string): Promise<FileContentPayload> {
+  const params = new URLSearchParams({ file_path: filePath });
+  return request<FileContentPayload>(`/api/session/${sessionId}/file?${params.toString()}`);
+}
+
+export function buildFullFileUrl(filePath: string, lineNumber?: number | null): string {
+  const params = new URLSearchParams({ file_path: filePath });
+  const hash = lineNumber ? `#L${lineNumber}` : "";
+  return `/review/${sessionId}/file?${params.toString()}${hash}`;
 }
 
 export function toggleReviewed(hunkId: string): Promise<string> {

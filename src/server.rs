@@ -8,15 +8,16 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use axum::{
     Json, Router,
-    extract::{Path as AxumPath, State},
+    extract::{Path as AxumPath, Query, State},
     response::{Html, IntoResponse},
     routing::{get, post},
 };
 
 use crate::{
     api::{
-        AgentKind, AppError, AppState, HOST, HunkView, OpenSessionRequest, PORT, PatchPayload,
-        RepoSession, SelectionRequest, ServerState, SessionOpened, SessionPayload,
+        AgentKind, AppError, AppState, FileContentPayload, FileQuery, HOST, HunkView,
+        OpenSessionRequest, PORT, PatchPayload, RepoSession, SelectionRequest, ServerState,
+        SessionOpened, SessionPayload,
     },
     comments::{
         anchored_comment_key, anchored_comments_only, build_anchored_comment_value,
@@ -25,8 +26,8 @@ use crate::{
     },
     git::{
         agent_is_available, agent_options, apply_patch, build_partial_patch_from_selection,
-        canonicalize_repo, collect_hunks, current_branch_name, detect_agent_availability, preview_patch,
-        run_git_no_output,
+        canonicalize_repo, collect_hunks, current_branch_name, detect_agent_availability,
+        preview_patch, read_repo_file, run_git_no_output,
     },
 };
 
@@ -60,6 +61,7 @@ pub(crate) async fn run_server() -> Result<()> {
         .route("/", get(root))
         .route("/healthz", get(healthz))
         .route("/review/{session_id}", get(review_page))
+        .route("/review/{session_id}/file", get(review_page))
         .route("/assets/app.js", get(app_js))
         .route("/assets/app.css", get(app_css))
         .route(
@@ -74,6 +76,7 @@ pub(crate) async fn run_server() -> Result<()> {
         .route("/api/session/{session_id}/state", get(session_state))
         .route("/api/session/{session_id}/agent", post(update_agent))
         .route("/api/session/{session_id}/hunk/{hunk_id}", get(hunk_patch))
+        .route("/api/session/{session_id}/file", get(session_file))
         .route("/api/session/{session_id}/reviewed", post(toggle_reviewed))
         .route("/api/session/{session_id}/comment", post(update_comment))
         .route("/api/session/{session_id}/stage", post(stage_hunk))
@@ -299,6 +302,22 @@ async fn hunk_patch(
     mark_activity(&state);
     let (_, patch, _) = crate::api::lookup_hunk(&state, &session_id, &hunk_id)?;
     Ok(Json(PatchPayload { patch }))
+}
+
+async fn session_file(
+    AxumPath(session_id): AxumPath<String>,
+    Query(query): Query<FileQuery>,
+    State(state): State<AppState>,
+) -> Result<Json<FileContentPayload>, AppError> {
+    mark_activity(&state);
+    let payload = crate::api::with_session(&state, &session_id, |session| {
+        Ok(FileContentPayload {
+            file_path: query.file_path.clone(),
+            content: read_repo_file(&session.repo_path, &query.file_path)?,
+        })
+    })?;
+
+    Ok(Json(payload))
 }
 
 async fn resolve_comment(

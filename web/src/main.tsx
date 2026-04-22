@@ -1,14 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import hljs from "highlight.js/lib/common";
 import "highlight.js/styles/github.css";
 import { toast, Toaster } from "sonner";
 import "./app.css";
+import "./fullFileView.css";
+import { fetchFileContent, fetchSessionState } from "./api";
 import { Footer } from "./components/Footer";
 import { Header } from "./components/Header";
 import { LeftSidebar } from "./components/LeftSidebar";
 import { Hunks } from "./components/hunks/Hunks";
 import { ReviewStoreProvider, useReviewStore } from "./reviewStore";
-import type { AgentKind, Hunk } from "./types";
+import type { AgentKind, Hunk, SessionState } from "./types";
 
 const AGENT_STORAGE_KEY = "moonreview:selected-agent";
 
@@ -62,6 +65,137 @@ function nextReviewFilePath(hunks: Hunk[], currentFilePath: string, snoozedFiles
   }
 
   return null;
+}
+
+function requestedFilePath() {
+  return new URLSearchParams(window.location.search).get("file_path");
+}
+
+function requestedLineNumberFromHash(hash: string): number | null {
+  const match = /^#L(\d+)(?:-L\d+)?$/.exec(hash);
+  if (!match) {
+    return null;
+  }
+
+  return Number.parseInt(match[1], 10);
+}
+
+function FullFileView() {
+  const [session, setSession] = useState<SessionState | null>(null);
+  const [content, setContent] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [activeHash, setActiveHash] = useState(window.location.hash);
+  const filePath = requestedFilePath();
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      if (!filePath) {
+        setLoadError("Missing file path.");
+        return;
+      }
+
+      try {
+        const [sessionData, fileData] = await Promise.all([
+          fetchSessionState(),
+          fetchFileContent(filePath),
+        ]);
+        if (cancelled) {
+          return;
+        }
+
+        setSession(sessionData);
+        setContent(fileData.content);
+        setLoadError("");
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        setLoadError(error instanceof Error ? error.message : "Failed to load file.");
+      }
+    }
+
+    void load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [filePath]);
+
+  const highlightedFileHtml = useMemo(() => hljs.highlightAuto(content || " ").value || "&nbsp;", [content]);
+  const lineNumbers = useMemo(
+    () => content.split("\n").map((_, index) => index + 1),
+    [content],
+  );
+
+  useEffect(() => {
+    const jumpToHashLine = () => {
+      setActiveHash(window.location.hash);
+      const targetLine = requestedLineNumberFromHash(window.location.hash);
+      if (!targetLine) {
+        return;
+      }
+
+      const element = document.getElementById(`L${targetLine}`);
+      if (!element) {
+        return;
+      }
+
+      element.scrollIntoView({ block: "start" });
+    };
+
+    jumpToHashLine();
+    window.addEventListener("hashchange", jumpToHashLine);
+    return () => {
+      window.removeEventListener("hashchange", jumpToHashLine);
+    };
+  }, [lineNumbers]);
+
+  return (
+    <>
+      <Toaster closeButton position="bottom-right" richColors />
+      <Header repoName={session?.repo_name} branchName={session?.branch_name} />
+      <main>
+        <section className="panel full-file-view">
+          <div className="full-file-view-head">
+            <div>
+              <h2>{filePath ?? "File"}</h2>
+            </div>
+          </div>
+          {loadError ? (
+            <div className="panel-message panel-message-error">{loadError}</div>
+          ) : (
+            <div className="full-file-code">
+              <div className="full-file-gutter" aria-hidden="true">
+                {lineNumbers.map((lineNumber) => (
+                  <a
+                    key={lineNumber}
+                    id={`L${lineNumber}`}
+                    className={`full-file-line-number ${
+                      requestedLineNumberFromHash(activeHash) === lineNumber
+                        ? "full-file-line-target"
+                        : ""
+                    }`.trim()}
+                    href={`#L${lineNumber}`}
+                  >
+                    {lineNumber}
+                  </a>
+                ))}
+              </div>
+              <pre className="full-file-code-block">
+                <code
+                  className="hljs"
+                  dangerouslySetInnerHTML={{ __html: highlightedFileHtml }}
+                />
+              </pre>
+            </div>
+          )}
+        </section>
+      </main>
+    </>
+  );
 }
 
 function AppContent() {
@@ -295,6 +429,10 @@ function AppContent() {
 }
 
 function App() {
+  if (window.location.pathname.endsWith("/file")) {
+    return <FullFileView />;
+  }
+
   return (
     <ReviewStoreProvider>
       <AppContent />

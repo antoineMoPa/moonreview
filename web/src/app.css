@@ -559,6 +559,18 @@ pre {
   z-index: 1;
 }
 
+.hunk-full-file-link {
+  margin-left: auto;
+  font-size: 0.77rem;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.hunk-full-file-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
 .diff-code {
   --diff-gutter-ch: 2;
   border: 1px solid var(--line);
