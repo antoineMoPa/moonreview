@@ -64,6 +64,7 @@ export type SidebarComment = {
 
 export type SessionState = {
   repo_name: string;
+  branch_name?: string | null;
   repo_path: string;
   read_only: boolean;
   patch_preview_line_limit: number;

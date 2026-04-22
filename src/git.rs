@@ -101,6 +101,16 @@ pub(crate) fn collect_hunks(repo_path: &Path, diff_target: &DiffTarget) -> Resul
     Ok(hunks)
 }
 
+pub(crate) fn current_branch_name(repo_path: &Path) -> Result<Option<String>> {
+    let branch = run_git_allow_status(repo_path, &["symbolic-ref", "--short", "HEAD"], &[0, 128])?;
+    let branch = branch.trim();
+    if branch.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(branch.to_string()))
+    }
+}
+
 fn run_target_diff(repo_path: &Path, base: &str, pathspec: Option<&str>) -> Result<String> {
     let mut args = vec![
         "diff",

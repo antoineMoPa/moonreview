@@ -1,15 +1,26 @@
 type HeaderProps = {
   repoName?: string | null;
+  branchName?: string | null;
 };
 
-export function Header({ repoName }: HeaderProps) {
+function formatRepoLabel(repoName?: string | null, branchName?: string | null): string | null {
+  if (!repoName) {
+    return null;
+  }
+
+  return branchName ? `${repoName} / ${branchName}` : repoName;
+}
+
+export function Header({ repoName, branchName }: HeaderProps) {
+  const repoLabel = formatRepoLabel(repoName, branchName);
+
   return (
     <header>
       <div className="header-inner">
         <div>
           <h1>🌚 moonreview</h1>
         </div>
-        {repoName ? <div className="header-repo-name">{repoName}</div> : null}
+        {repoLabel ? <div className="header-repo-name">{repoLabel}</div> : null}
       </div>
     </header>
   );

@@ -53,6 +53,7 @@ pub(crate) struct SessionOpened {
 #[derive(Serialize)]
 pub(crate) struct SessionPayload {
     pub(crate) repo_name: String,
+    pub(crate) branch_name: Option<String>,
     pub(crate) repo_path: String,
     pub(crate) read_only: bool,
     pub(crate) patch_preview_line_limit: usize,

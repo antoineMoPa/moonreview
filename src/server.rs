@@ -25,7 +25,7 @@ use crate::{
     },
     git::{
         agent_is_available, agent_options, apply_patch, build_partial_patch_from_selection,
-        canonicalize_repo, collect_hunks, detect_agent_availability, preview_patch,
+        canonicalize_repo, collect_hunks, current_branch_name, detect_agent_availability, preview_patch,
         run_git_no_output,
     },
 };
@@ -260,6 +260,7 @@ async fn session_state(
                 .and_then(|name| name.to_str())
                 .unwrap_or("repo")
                 .to_string(),
+            branch_name: current_branch_name(&session.repo_path)?,
             repo_path: session.repo_path.display().to_string(),
             read_only: session.diff_target.base.is_some(),
             patch_preview_line_limit: PATCH_PREVIEW_LINE_LIMIT,
