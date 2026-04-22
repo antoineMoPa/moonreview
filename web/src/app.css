@@ -103,6 +103,13 @@ main {
   gap: 0.45rem;
 }
 
+.sidebar-file-group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
 .sidebar-file-group-title {
   margin: 0;
   font-size: 0.72rem;
@@ -169,6 +176,19 @@ main {
   font-size: 0.82rem;
   font-weight: 700;
   letter-spacing: 0.01em;
+}
+
+.diff-stat-normal {
+  font-weight: 400;
+  opacity: 0.68;
+}
+
+.diff-stat-muted.diff-stat-added {
+  color: #5a8a70;
+}
+
+.diff-stat-muted.diff-stat-removed {
+  color: #9a655f;
 }
 
 .diff-stat-added {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useReviewStore } from "../../reviewStore";
 import type { AgentKind, AgentOption, Hunk } from "../../types";
+import { EMPTY_LINE_DIFF_STATS, lineDiffReducer } from "../diffStats";
 import { HunkCard } from "./HunkCard";
 
 type HunksProps = {
@@ -54,13 +55,7 @@ function FileAccordion({
   } = useReviewStore();
   const staged = hunks.every((hunk) => hunk.staged);
   const status = staged ? "Staged" : "Unstaged";
-  const diffStats = hunks.reduce(
-    (sum, hunk) => ({
-      added: sum.added + hunk.added_line_count,
-      removed: sum.removed + hunk.removed_line_count,
-    }),
-    { added: 0, removed: 0 },
-  );
+  const diffStats = hunks.reduce(lineDiffReducer, EMPTY_LINE_DIFF_STATS);
   const readOnly = data?.read_only ?? false;
 
   return (

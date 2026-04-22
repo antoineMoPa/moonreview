@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { EMPTY_LINE_DIFF_STATS, lineDiffReducer } from "./diffStats";
 import type { SidebarFileItem } from "./LeftSidebar";
 
 type SidebarSectionProps = {
@@ -95,6 +96,8 @@ function SidebarFileButton({ file, active, readOnly, busy, onJumpToFile, onToggl
 type SidebarFileGroupProps = {
   title: string;
   files: SidebarFileItem[];
+  addedCount: number;
+  removedCount: number;
   activeFilePath?: string | null;
   readOnly: boolean;
   busy: boolean;
@@ -105,6 +108,8 @@ type SidebarFileGroupProps = {
 function SidebarFileGroup({
   title,
   files,
+  addedCount,
+  removedCount,
   activeFilePath,
   readOnly,
   busy,
@@ -117,7 +122,13 @@ function SidebarFileGroup({
 
   return (
     <div className="sidebar-file-group">
-      <p className="sidebar-file-group-title">{title}</p>
+      <div className="sidebar-file-group-head">
+        <p className="sidebar-file-group-title">{title}</p>
+        <div className="diff-stats-summary diff-stats-summary-muted" aria-label={`${title} diff stats`}>
+          <span className="diff-stat diff-stat-normal diff-stat-muted diff-stat-added">++{addedCount}</span>
+          <span className="diff-stat diff-stat-normal diff-stat-muted diff-stat-removed">--{removedCount}</span>
+        </div>
+      </div>
       <div className="sidebar-list">
         {files.map((file) => (
           <SidebarFileButton
@@ -159,12 +170,16 @@ export function SidebarFilesSection({
   const unstagedFiles = files.filter((file) => file.status !== "staged" && !file.snoozed);
   const stagedFiles = files.filter((file) => file.status === "staged");
   const snoozedFiles = files.filter((file) => file.snoozed);
+  const unstagedDiffStats = unstagedFiles.reduce(lineDiffReducer, EMPTY_LINE_DIFF_STATS);
+  const stagedDiffStats = stagedFiles.reduce(lineDiffReducer, EMPTY_LINE_DIFF_STATS);
 
   return (
     <SidebarSection title="Files" addedCount={addedCount} removedCount={removedCount}>
       <SidebarFileGroup
         title="Unstaged"
         files={unstagedFiles}
+        addedCount={unstagedDiffStats.added}
+        removedCount={unstagedDiffStats.removed}
         activeFilePath={activeFilePath}
         readOnly={readOnly}
         busy={busy}
@@ -174,6 +189,8 @@ export function SidebarFilesSection({
       <SidebarFileGroup
         title="Staged"
         files={stagedFiles}
+        addedCount={stagedDiffStats.added}
+        removedCount={stagedDiffStats.removed}
         activeFilePath={activeFilePath}
         readOnly={readOnly}
         busy={busy}
@@ -183,6 +200,8 @@ export function SidebarFilesSection({
       <SidebarFileGroup
         title="Snoozed"
         files={snoozedFiles}
+        addedCount={0}
+        removedCount={0}
         activeFilePath={activeFilePath}
         readOnly={readOnly}
         busy={busy}

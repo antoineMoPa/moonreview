@@ -6,6 +6,7 @@ function makeHunk(overrides: Partial<Hunk>): Hunk {
   return {
     id: "hunk-1",
     file_path: "src/example.ts",
+    change_kind: "modified",
     header: "@@ -1,5 +10,5 @@",
     staged: false,
     reviewed: false,

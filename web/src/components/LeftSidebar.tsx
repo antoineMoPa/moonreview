@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { useReviewStore } from "../reviewStore";
 import { COMMENT_DISPATCH_STATUS } from "../types";
 import type { CommentDispatchStatus, FileChangeKind, SessionState, SidebarComment } from "../types";
+import { EMPTY_LINE_DIFF_STATS, lineDiffReducer } from "./diffStats";
 import { SidebarCommentsSection } from "./SidebarCommentsSection";
 import { SidebarFilesSection } from "./SidebarFilesSection";
 
@@ -19,8 +20,8 @@ export type SidebarFileItem = {
   changeKind: FileChangeKind;
   snoozed: boolean;
   status: FileStageStatus;
-  addedLineCount: number;
-  removedLineCount: number;
+  added_line_count: number;
+  removed_line_count: number;
 };
 
 export type SidebarCommentItem = {
@@ -58,8 +59,8 @@ function buildSidebarFiles(data: SessionState, snoozedFiles: Set<string>): Sideb
     const existing = grouped.get(hunk.file_path);
     if (existing) {
       existing.changeKind = mergeFileChangeKind(existing.changeKind, hunk.change_kind);
-      existing.addedLineCount += hunk.added_line_count;
-      existing.removedLineCount += hunk.removed_line_count;
+      existing.added_line_count += hunk.added_line_count;
+      existing.removed_line_count += hunk.removed_line_count;
       if (
         (existing.status === FILE_STAGE_STATUS.staged && !hunk.staged) ||
         (existing.status === FILE_STAGE_STATUS.unstaged && hunk.staged)
@@ -74,8 +75,8 @@ function buildSidebarFiles(data: SessionState, snoozedFiles: Set<string>): Sideb
       changeKind: hunk.change_kind,
       snoozed: snoozedFiles.has(hunk.file_path),
       status: hunk.staged ? FILE_STAGE_STATUS.staged : FILE_STAGE_STATUS.unstaged,
-      addedLineCount: hunk.added_line_count,
-      removedLineCount: hunk.removed_line_count,
+      added_line_count: hunk.added_line_count,
+      removed_line_count: hunk.removed_line_count,
     });
   }
 
@@ -145,14 +146,7 @@ export function LeftSidebar({
   const sidebarFiles = useMemo(() => buildSidebarFiles(data, snoozedFiles), [data, snoozedFiles]);
   const sidebarComments = useMemo(() => buildSidebarComments(data), [data]);
   const diffStats = useMemo(
-    () =>
-      data.hunks.reduce(
-        (sum, hunk) => ({
-          added: sum.added + hunk.added_line_count,
-          removed: sum.removed + hunk.removed_line_count,
-        }),
-        { added: 0, removed: 0 },
-      ),
+    () => data.hunks.reduce(lineDiffReducer, EMPTY_LINE_DIFF_STATS),
     [data],
   );
 
