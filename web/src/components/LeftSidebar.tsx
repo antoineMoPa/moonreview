@@ -96,6 +96,9 @@ function statusLabel(resolved: boolean, status: CommentDispatchStatus) {
   if (status === COMMENT_DISPATCH_STATUS.queued) {
     return "queued";
   }
+  if (status === COMMENT_DISPATCH_STATUS.batched) {
+    return "batched";
+  }
   return resolved ? "resolved" : "open";
 }
 

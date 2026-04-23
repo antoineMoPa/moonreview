@@ -5,6 +5,7 @@ import {
   discardHunk as discardHunkRequest,
   fetchSessionState,
   saveComment as saveCommentRequest,
+  sendCommentBatch as sendCommentBatchRequest,
   stageSelection as stageSelectionRequest,
   toggleStage as toggleStageRequest,
   toggleStageFile as toggleStageFileRequest,
@@ -19,6 +20,7 @@ import type { AgentKind, DraftComment, Hunk, SessionState } from "./types";
 type ReviewStoreState = {
   data: SessionState | null;
   draftComments: DraftComment[];
+  batchDraftComments: boolean;
   loadError: string;
   busy: boolean;
   pollingStopped: boolean;
@@ -36,7 +38,9 @@ type ReviewStoreValue = {
     updateDraftComment: (hunkId: string, comment: string) => void;
     upsertDraftComment: (draft: DraftComment) => void;
     removeDraftComment: (draftId: string) => void;
-    saveComment: (hunkId: string, comment: string) => Promise<void>;
+    saveComment: (hunkId: string, comment: string, batch?: boolean) => Promise<void>;
+    setBatchDraftComments: (value: boolean) => void;
+    sendCommentBatch: () => Promise<void>;
     setAgent: (agent: AgentKind) => Promise<void>;
   };
 };
@@ -50,7 +54,8 @@ type ReviewStoreAction =
   | { type: "timeout_toast_shown" }
   | { type: "draft_comment_updated"; hunkId: string; comment: string }
   | { type: "draft_comment_upserted"; draft: DraftComment }
-  | { type: "draft_comment_removed"; draftId: string };
+  | { type: "draft_comment_removed"; draftId: string }
+  | { type: "batch_draft_comments_set"; value: boolean };
 
 const ReviewStoreContext = createContext<ReviewStoreValue | null>(null);
 const EXPORT_SERVER_URL = "http://localhost:42000";
@@ -146,6 +151,11 @@ function reviewStoreReducer(state: ReviewStoreState, action: ReviewStoreAction):
         ...state,
         draftComments: state.draftComments.filter((draft) => draft.id !== action.draftId),
       };
+    case "batch_draft_comments_set":
+      return {
+        ...state,
+        batchDraftComments: action.value,
+      };
     default:
       return state;
   }
@@ -155,6 +165,7 @@ function initialReviewStoreState(): ReviewStoreState {
   return {
     data: null,
     draftComments: loadDraftComments(getSessionId()),
+    batchDraftComments: false,
     loadError: "",
     busy: false,
     pollingStopped: false,
@@ -244,6 +255,10 @@ export function ReviewStoreProvider({ children }: { children: React.ReactNode })
     dispatch({ type: "draft_comment_removed", draftId });
   }
 
+  function setBatchDraftComments(value: boolean) {
+    dispatch({ type: "batch_draft_comments_set", value });
+  }
+
   useEffect(() => {
     void loadState();
   }, []);
@@ -276,7 +291,9 @@ export function ReviewStoreProvider({ children }: { children: React.ReactNode })
         updateDraftComment,
         upsertDraftComment,
         removeDraftComment,
-        saveComment: async (hunkId, comment) => mutate(() => saveCommentRequest(hunkId, comment)),
+        saveComment: async (hunkId, comment, batch) => mutate(() => saveCommentRequest(hunkId, comment, batch)),
+        setBatchDraftComments,
+        sendCommentBatch: async () => mutate(() => sendCommentBatchRequest()),
         setAgent: async (agent) => mutate(() => updateAgentRequest(agent)),
       },
     }),

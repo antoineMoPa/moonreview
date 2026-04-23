@@ -299,6 +299,7 @@ main {
 }
 
 .sidebar-status-open,
+.sidebar-status-batched,
 .sidebar-status-queued,
 .sidebar-status-running {
   background: rgba(183, 82, 45, 0.1);
@@ -327,6 +328,14 @@ main {
   flex-wrap: wrap;
   gap: 0.6rem;
   align-items: center;
+}
+
+.batch-comment-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--muted);
+  font-size: 0.92rem;
 }
 
 .panel {
@@ -499,6 +508,18 @@ select {
   display: flex;
   justify-content: flex-end;
   padding: 0 1rem 1rem;
+}
+
+.comment-batch-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0.75rem 0 0;
+  padding: 0.85rem 1rem;
+  border: 0;
+  border-radius: 3px;
+  background: #eee4d6;
 }
 
 .file-accordion-meta-footer {

@@ -36,17 +36,22 @@ pub(crate) struct CommentUpdate {
 }
 
 #[derive(Clone)]
-pub(crate) struct DispatchJob {
-    pub(crate) session_id: String,
-    pub(crate) repo_path: PathBuf,
-    pub(crate) ui_url: String,
-    pub(crate) agent: AgentKind,
+pub(crate) struct DispatchTarget {
     pub(crate) hunk_id: String,
     pub(crate) file_path: String,
     pub(crate) header: String,
     pub(crate) comment_key: String,
     pub(crate) selection: String,
     pub(crate) comment: String,
+}
+
+#[derive(Clone)]
+pub(crate) struct DispatchJob {
+    pub(crate) session_id: String,
+    pub(crate) repo_path: PathBuf,
+    pub(crate) ui_url: String,
+    pub(crate) agent: AgentKind,
+    pub(crate) targets: Vec<DispatchTarget>,
 }
 
 pub(crate) fn build_anchored_comment_value(comments: &[AnchoredComment]) -> String {
@@ -152,10 +157,13 @@ pub(crate) fn dispatch_key(hunk_id: &str, entry: &AnchoredComment) -> String {
 pub(crate) fn spawn_comment_dispatch(state: AppState, job: DispatchJob) {
     thread::spawn(move || {
         let _ = with_session(&state, &job.session_id, |session| {
-            if let Some(dispatch) = session
-                .comment_dispatches
-                .get_mut(&format!("{}:{}", job.hunk_id, job.comment_key))
-            {
+            for target in &job.targets {
+                let Some(dispatch) = session
+                    .comment_dispatches
+                    .get_mut(&format!("{}:{}", target.hunk_id, target.comment_key))
+                else {
+                    continue;
+                };
                 dispatch.status = CommentDispatchStatus::Running;
                 dispatch.detail = format!("Running in {}.", job.agent.label());
             }
@@ -163,45 +171,43 @@ pub(crate) fn spawn_comment_dispatch(state: AppState, job: DispatchJob) {
         });
 
         eprintln!(
-            "[moonreview] dispatch start agent={} repo={} file={} hunk={}",
+            "[moonreview] dispatch start agent={} repo={} comments={}",
             job.agent.label(),
             job.repo_path.display(),
-            job.file_path,
-            job.hunk_id
+            job.targets.len(),
         );
         let result = run_agent_dispatch(&job);
         match &result {
             Ok(detail) => eprintln!(
-                "[moonreview] dispatch done agent={} file={} hunk={} detail={}",
+                "[moonreview] dispatch done agent={} comments={} detail={}",
                 job.agent.label(),
-                job.file_path,
-                job.hunk_id,
+                job.targets.len(),
                 detail
             ),
             Err(error) => eprintln!(
-                "[moonreview] dispatch failed agent={} file={} hunk={} error={}",
+                "[moonreview] dispatch failed agent={} comments={} error={}",
                 job.agent.label(),
-                job.file_path,
-                job.hunk_id,
+                job.targets.len(),
                 error
             ),
         }
         let _ = with_session(&state, &job.session_id, |session| {
-            let Some(dispatch) = session
-                .comment_dispatches
-                .get_mut(&format!("{}:{}", job.hunk_id, job.comment_key))
-            else {
-                return Ok(());
-            };
-
-            match &result {
-                Ok(detail) => {
+            for target in &job.targets {
+                let Some(dispatch) = session
+                    .comment_dispatches
+                    .get_mut(&format!("{}:{}", target.hunk_id, target.comment_key))
+                else {
+                    continue;
+                };
+                match &result {
+                    Ok(detail) => {
                     dispatch.status = CommentDispatchStatus::Completed;
                     dispatch.detail = detail.clone();
-                }
-                Err(error) => {
+                    }
+                    Err(error) => {
                     dispatch.status = CommentDispatchStatus::Failed;
                     dispatch.detail = error.to_string();
+                    }
                 }
             }
 
@@ -315,6 +321,11 @@ pub(crate) fn plan_comment_dispatches(
     request: &CommentRequest,
 ) -> Result<Vec<DispatchJob>> {
     let update = apply_comment_update(session, request);
+    if request.batch {
+        plan_batched_comment_save(session, session_id, request, &update)?;
+        return Ok(Vec::new());
+    }
+
     if !should_dispatch_comments(session, &update) {
         return Ok(Vec::new());
     }
@@ -336,6 +347,74 @@ pub(crate) fn plan_comment_dispatches(
         .collect();
 
     Ok(jobs)
+}
+
+fn plan_batched_comment_save(
+    session: &mut RepoSession,
+    session_id: &str,
+    request: &CommentRequest,
+    update: &CommentUpdate,
+) -> Result<()> {
+    if update.next_anchored.is_empty() {
+        return Ok(());
+    }
+
+    let hunk = lookup_dispatch_hunk(session, &request.hunk_id)?;
+    let previous_keys = update
+        .previous_anchored
+        .iter()
+        .map(anchored_comment_key)
+        .collect::<HashSet<_>>();
+
+    for entry in update.next_anchored.iter().filter(|entry| !entry.resolved) {
+        let _ = queue_dispatch_job(session, session_id, request, &hunk, &previous_keys, entry);
+    }
+
+    Ok(())
+}
+
+pub(crate) fn plan_batched_comment_dispatches(
+    session: &mut RepoSession,
+    session_id: &str,
+) -> Result<Vec<DispatchJob>> {
+    if session.selected_agent == AgentKind::None {
+        return Err(anyhow!("select an agent before sending a batch"));
+    }
+
+    let hunks = collect_hunks(&session.repo_path, &session.diff_target)?;
+    let mut targets = Vec::new();
+
+    for hunk in hunks {
+        let stored_comment = session.comments.get(&hunk.id).cloned().unwrap_or_default();
+        for entry in parse_anchored_comments(&stored_comment)
+            .into_iter()
+            .filter(|entry| !entry.resolved)
+        {
+            let dispatch_key = dispatch_key(&hunk.id, &entry);
+            let Some(dispatch) = session.comment_dispatches.get_mut(&dispatch_key) else {
+                continue;
+            };
+            if dispatch.status != CommentDispatchStatus::Batched {
+                continue;
+            }
+
+            dispatch.status = CommentDispatchStatus::Queued;
+            dispatch.detail = format!("Queued for {}.", session.selected_agent.label());
+            targets.push(build_dispatch_target(&hunk.id, &hunk, &entry));
+        }
+    }
+
+    if targets.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    Ok(vec![DispatchJob {
+        session_id: session_id.to_string(),
+        repo_path: session.repo_path.clone(),
+        ui_url: format!("{SERVER_URL}/review/{session_id}"),
+        agent: session.selected_agent,
+        targets,
+    }])
 }
 
 fn apply_comment_update(session: &mut RepoSession, request: &CommentRequest) -> CommentUpdate {
@@ -412,26 +491,63 @@ fn queue_dispatch_job(
     }
 
     let dispatch_key = dispatch_key(&request.hunk_id, entry);
+    let status = if request.batch {
+        CommentDispatchStatus::Batched
+    } else {
+        CommentDispatchStatus::Queued
+    };
+    let detail = if request.batch {
+        "Waiting for batch send.".to_string()
+    } else {
+        format!("Queued for {}.", session.selected_agent.label())
+    };
     session.comment_dispatches.insert(
         dispatch_key,
-        CommentDispatchState {
-            status: CommentDispatchStatus::Queued,
-            detail: format!("Queued for {}.", session.selected_agent.label()),
-        },
+        CommentDispatchState { status, detail },
     );
 
-    Some(DispatchJob {
+    if request.batch {
+        return None;
+    }
+
+    Some(build_dispatch_job(
+        session,
+        session_id,
+        &request.hunk_id,
+        hunk,
+        entry,
+    ))
+}
+
+fn build_dispatch_job(
+    session: &RepoSession,
+    session_id: &str,
+    hunk_id: &str,
+    hunk: &DiffHunk,
+    entry: &AnchoredComment,
+) -> DispatchJob {
+    DispatchJob {
         session_id: session_id.to_string(),
         repo_path: session.repo_path.clone(),
         ui_url: format!("{SERVER_URL}/review/{session_id}"),
         agent: session.selected_agent,
-        hunk_id: request.hunk_id.clone(),
+        targets: vec![build_dispatch_target(hunk_id, hunk, entry)],
+    }
+}
+
+fn build_dispatch_target(
+    hunk_id: &str,
+    hunk: &DiffHunk,
+    entry: &AnchoredComment,
+) -> DispatchTarget {
+    DispatchTarget {
+        hunk_id: hunk_id.to_string(),
         file_path: hunk.file_path.clone(),
         header: hunk.header.clone(),
-        comment_key: key.clone(),
+        comment_key: anchored_comment_key(entry),
         selection: entry.selection.clone(),
         comment: entry.comment.clone(),
-    })
+    }
 }
 
 pub(crate) fn comment_dispatch_view(

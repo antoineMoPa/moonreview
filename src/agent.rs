@@ -19,15 +19,55 @@ pub(crate) fn run_agent_dispatch(job: &DispatchJob) -> Result<String> {
 }
 
 fn build_agent_prompt(job: &DispatchJob) -> String {
-    format!(
-        "Moon Review note\n=================\nPlease fix this code issue.\n\nRepository: {}\nFile: {}\nHunk: {}\n\nSelected code:\n{}\n\nIssue:\n{}\n\nMoonreview UI:\n{}\n",
+    if job.targets.len() == 1 {
+        let target = &job.targets[0];
+        return format!(
+            concat!(
+                "Moon Review note\n",
+                "=================\n",
+                "Please fix this code issue.\n\n",
+                "Repository: {}\n",
+                "File: {}\n",
+                "Hunk: {}\n\n",
+                "Selected code:\n{}\n\n",
+                "Issue:\n{}\n\n",
+                "Moonreview UI:\n{}\n",
+            ),
+            job.repo_path.display(),
+            target.file_path,
+            target.header,
+            target.selection,
+            target.comment,
+            job.ui_url,
+        );
+    }
+
+    let mut prompt = format!(
+        concat!(
+            "Moon Review batch\n",
+            "=================\n",
+            "Please address all of the following code review comments in one pass.\n\n",
+            "Repository: {}\n",
+            "Moonreview UI:\n",
+            "{}\n\n",
+            "Comments:\n\n",
+        ),
         job.repo_path.display(),
-        job.file_path,
-        job.header,
-        job.selection,
-        job.comment,
         job.ui_url,
-    )
+    );
+
+    for (index, target) in job.targets.iter().enumerate() {
+        prompt.push_str(&format!(
+            "{}. File: {}\nHunk: {}\nSelected code:\n{}\n\nIssue:\n{}\n\n",
+            index + 1,
+            target.file_path,
+            target.header,
+            target.selection,
+            target.comment,
+        ));
+    }
+
+    prompt
 }
 
 fn run_claude(prompt: String, repo_path: &Path) -> Result<String> {

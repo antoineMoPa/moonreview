@@ -2,6 +2,7 @@ export type AgentKind = "none" | "claude" | "codex";
 
 export const COMMENT_DISPATCH_STATUS = {
   idle: "idle",
+  batched: "batched",
   queued: "queued",
   running: "running",
   completed: "completed",

@@ -140,11 +140,12 @@ pub(crate) struct AgentOption {
     pub(crate) available: bool,
 }
 
-#[derive(Clone, Copy, Default, Serialize)]
+#[derive(Clone, Copy, Default, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum CommentDispatchStatus {
     #[default]
     Idle,
+    Batched,
     Queued,
     Running,
     Completed,
@@ -194,6 +195,8 @@ pub(crate) struct FileQuery {
 pub(crate) struct CommentRequest {
     pub(crate) hunk_id: String,
     pub(crate) comment: String,
+    #[serde(default)]
+    pub(crate) batch: bool,
 }
 
 #[derive(Deserialize)]

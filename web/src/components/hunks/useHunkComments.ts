@@ -41,7 +41,7 @@ export function useHunkComments({
   setLockedSelectionPosition,
 }: UseHunkCommentsArgs) {
   const {
-    state: { draftComments },
+    state: { batchDraftComments, draftComments },
     actions,
   } = useReviewStore();
   const [activeDraftId, setActiveDraftId] = useState<string | null>(null);
@@ -145,7 +145,7 @@ export function useHunkComments({
     }
     setSelectedText("");
     setComposerOpen(false);
-    void actions.saveComment(hunk.id, next);
+    void actions.saveComment(hunk.id, next, batchDraftComments);
   }
 
   function persistAnchoredComments(nextAnchored: AnchoredComment[]) {
@@ -210,6 +210,8 @@ export function useHunkComments({
           header: hunk.header,
         });
       },
+      batchDraftComments,
+      onBatchDraftCommentsChange: actions.setBatchDraftComments,
       onDraftAdd: (draftId: string) => {
         const draft = getAttachedDraft(draftId);
         if (draft) {
@@ -229,6 +231,7 @@ export function useHunkComments({
       deleteComment,
       editingCommentIndex,
       editingCommentValue,
+      batchDraftComments,
       hunk.comment_dispatches,
       hunk.file_path,
       hunk.header,

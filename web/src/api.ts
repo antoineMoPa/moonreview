@@ -102,10 +102,16 @@ export function discardHunk(hunkId: string): Promise<string> {
   });
 }
 
-export function saveComment(hunkId: string, comment: string): Promise<string> {
+export function saveComment(hunkId: string, comment: string, batch = false): Promise<string> {
   return request<string>(`/api/session/${sessionId}/comment`, {
     method: "POST",
-    body: JSON.stringify({ hunk_id: hunkId, comment }),
+    body: JSON.stringify({ hunk_id: hunkId, comment, batch }),
+  });
+}
+
+export function sendCommentBatch(): Promise<string> {
+  return request<string>(`/api/session/${sessionId}/comment-batch`, {
+    method: "POST",
   });
 }
 

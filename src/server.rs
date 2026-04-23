@@ -22,7 +22,7 @@ use crate::{
     comments::{
         anchored_comment_key, anchored_comments_only, build_anchored_comment_value,
         build_export_text, build_sidebar_comments, comment_dispatch_view, parse_anchored_comments,
-        plan_comment_dispatches, spawn_comment_dispatch,
+        plan_batched_comment_dispatches, plan_comment_dispatches, spawn_comment_dispatch,
     },
     git::{
         agent_is_available, agent_options, apply_patch, build_partial_patch_from_selection,
@@ -79,6 +79,10 @@ pub(crate) async fn run_server() -> Result<()> {
         .route("/api/session/{session_id}/file", get(session_file))
         .route("/api/session/{session_id}/reviewed", post(toggle_reviewed))
         .route("/api/session/{session_id}/comment", post(update_comment))
+        .route(
+            "/api/session/{session_id}/comment-batch",
+            post(send_comment_batch),
+        )
         .route("/api/session/{session_id}/stage", post(stage_hunk))
         .route("/api/session/{session_id}/stage-file", post(stage_file))
         .route(
@@ -402,6 +406,22 @@ async fn update_comment(
     mark_activity(&state);
     let dispatch_jobs = crate::api::with_session(&state, &session_id, |session| {
         plan_comment_dispatches(session, &session_id, &request)
+    })?;
+
+    for job in dispatch_jobs {
+        spawn_comment_dispatch(state.clone(), job);
+    }
+
+    Ok("ok")
+}
+
+async fn send_comment_batch(
+    AxumPath(session_id): AxumPath<String>,
+    State(state): State<AppState>,
+) -> Result<&'static str, AppError> {
+    mark_activity(&state);
+    let dispatch_jobs = crate::api::with_session(&state, &session_id, |session| {
+        plan_batched_comment_dispatches(session, &session_id)
     })?;
 
     for job in dispatch_jobs {

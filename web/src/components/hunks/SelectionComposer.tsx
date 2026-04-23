@@ -13,6 +13,8 @@ export function SelectionComposer({ draftId, style }: SelectionComposerProps) {
     onAgentChange,
     getDraft,
     onDraftNoteChange,
+    batchDraftComments,
+    onBatchDraftCommentsChange,
     onDraftAdd,
     onDraftClear,
   } = useHunkCommentContext();
@@ -34,6 +36,14 @@ export function SelectionComposer({ draftId, style }: SelectionComposerProps) {
         onChange={(event) => onDraftNoteChange(draftId, event.target.value)}
         spellCheck={false}
       />
+      <label className="batch-comment-toggle">
+        <input
+          type="checkbox"
+          checked={batchDraftComments}
+          onChange={(event) => onBatchDraftCommentsChange(event.currentTarget.checked)}
+        />
+        Batch this comment
+      </label>
       <div className="toolbar">
         <AgentSelect
           agents={agents}
