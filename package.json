@@ -5,7 +5,8 @@
   "scripts": {
     "build": "node ./web/build.mjs",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "bin-release": "./scripts/bin-release.sh"
   },
   "dependencies": {
     "highlight.js": "^11.11.1",

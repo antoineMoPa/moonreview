@@ -8,14 +8,36 @@ moonreview is a tiny local code review UI for git.
 
 It shows git hunks, lets you comment, stage or unstage them individually. Comments can either be sent to your local claude or codex (using your currently signed-in account) or collected in one big review text for copy pasting in your favourite AI tool.
 
-## Requirements
+## Installation
+
+Build from source:
+
+Requirements:
 
 - [Rust](https://www.rust-lang.org/tools/install)
-
-## Installation / Usage
+- Node.js with npm
 
 ```bash
 cargo install --path .
+moonreview
+```
+
+Source builds require Rust plus the existing Node/npm frontend toolchain used by `build.rs`.
+
+## Easy installation on mac (arm64)
+
+Install the latest macOS Apple Silicon build:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/antoineMoPa/moonreview/main/install.sh | sh
+```
+
+If `~/.local/bin` is not already on your `PATH`, you may need to update your PATH in your
+shells.
+
+## Usage
+
+```bash
 moonreview
 ```
 
