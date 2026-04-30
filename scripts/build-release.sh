@@ -10,8 +10,9 @@ TAG="v$PACKAGE_VERSION"
 OUTPUT_DIR="$ROOT_DIR/target/release-artifacts/$TAG"
 MACOS_TARGET_TRIPLE="aarch64-apple-darwin"
 LINUX_TARGET_TRIPLE="x86_64-unknown-linux-gnu"
-LINUX_DOCKER_IMAGE="${MOONREVIEW_LINUX_DOCKER_IMAGE:-debian:bookworm}"
 RUST_TOOLCHAIN="${MOONREVIEW_RUST_TOOLCHAIN:-1.95.0}"
+LINUX_DOCKER_BASE_IMAGE="${MOONREVIEW_LINUX_DOCKER_BASE_IMAGE:-${MOONREVIEW_LINUX_DOCKER_IMAGE:-debian:bookworm}}"
+LINUX_DOCKER_BUILDER_IMAGE="${MOONREVIEW_LINUX_DOCKER_BUILDER_IMAGE:-moonreview-linux-builder:$RUST_TOOLCHAIN-$LINUX_TARGET_TRIPLE}"
 
 default_linux_build_platform() {
     case "$(uname -m)" in
@@ -76,35 +77,40 @@ build_linux_amd64() {
         exit 1
     fi
 
-    echo "Building moonreview $TAG for $LINUX_TARGET_TRIPLE with Docker..."
+    echo "Preparing Linux builder image $LINUX_DOCKER_BUILDER_IMAGE..."
     platform_args=()
     if [ -n "$LINUX_BUILD_PLATFORM" ]; then
         platform_args=(--platform "$LINUX_BUILD_PLATFORM")
     fi
 
+    docker build \
+        "${platform_args[@]}" \
+        --build-arg BASE_IMAGE="$LINUX_DOCKER_BASE_IMAGE" \
+        --build-arg LINUX_TARGET_TRIPLE="$LINUX_TARGET_TRIPLE" \
+        --build-arg RUST_TOOLCHAIN="$RUST_TOOLCHAIN" \
+        -t "$LINUX_DOCKER_BUILDER_IMAGE" \
+        -f scripts/linux-build.Dockerfile \
+        scripts
+
+    echo "Building moonreview $TAG for $LINUX_TARGET_TRIPLE with Docker..."
     docker run --rm \
         "${platform_args[@]}" \
         -e DEBIAN_FRONTEND=noninteractive \
-        -e CARGO_HOME=/tmp/cargo \
-        -e RUSTUP_HOME=/tmp/rustup \
+        -e CARGO_HOME=/work/target/docker-cargo-home \
+        -e RUSTUP_HOME=/opt/rust/rustup \
         -e CARGO_TARGET_DIR=/work/target/docker-linux-amd64 \
         -e CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc \
         -e LINUX_TARGET_TRIPLE="$LINUX_TARGET_TRIPLE" \
-        -e RUST_TOOLCHAIN="$RUST_TOOLCHAIN" \
         -e HOST_UID="$(id -u)" \
         -e HOST_GID="$(id -g)" \
         -v "$ROOT_DIR:/work" \
         -w /work \
-        "$LINUX_DOCKER_IMAGE" \
+        "$LINUX_DOCKER_BUILDER_IMAGE" \
         bash -lc '
             set -euo pipefail
-            apt-get update
-            apt-get install -y --no-install-recommends build-essential ca-certificates curl gcc-x86-64-linux-gnu libc6-dev-amd64-cross nodejs npm
-            curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs \
-                | sh -s -- -y --profile minimal --default-toolchain "$RUST_TOOLCHAIN" --target "$LINUX_TARGET_TRIPLE"
-            export PATH="$CARGO_HOME/bin:$PATH"
+            export PATH="/opt/rust/cargo/bin:$PATH"
             cargo build --release --locked --target "$LINUX_TARGET_TRIPLE"
-            chown -R "$HOST_UID:$HOST_GID" /work/target/docker-linux-amd64 /work/node_modules /work/web/dist 2>/dev/null || true
+            chown -R "$HOST_UID:$HOST_GID" /work/target/docker-linux-amd64 /work/target/docker-cargo-home /work/node_modules /work/web/dist 2>/dev/null || true
         '
 
     package_binary "$LINUX_TARGET_TRIPLE" "$ROOT_DIR/target/docker-linux-amd64/$LINUX_TARGET_TRIPLE/release/moonreview"
