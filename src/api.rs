@@ -1,21 +1,55 @@
 use std::{
     collections::{HashMap, HashSet},
+    env,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Instant,
 };
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use axum::response::IntoResponse;
 use serde::{Deserialize, Serialize};
 
 use crate::{comments::CommentDispatchState, git::collect_hunks};
 
-pub(crate) const HOST: &str = "127.0.0.1";
-pub(crate) const PORT: u16 = 42000;
-pub(crate) const SERVER_URL: &str = "http://127.0.0.1:42000";
-pub(crate) const EXPORT_SERVER_URL: &str = "http://localhost:42000";
+pub(crate) const DEFAULT_HOST: &str = "127.0.0.1";
+pub(crate) const DEFAULT_PORT: u16 = 42000;
+const HOST_ENV_VAR: &str = "MOONREVIEW_HOST";
+const PORT_ENV_VAR: &str = "MOONREVIEW_PORT";
+
+pub(crate) fn bind_host() -> String {
+    env::var(HOST_ENV_VAR).unwrap_or_else(|_| DEFAULT_HOST.to_string())
+}
+
+pub(crate) fn client_host() -> String {
+    match bind_host().as_str() {
+        "0.0.0.0" | "::" => DEFAULT_HOST.to_string(),
+        host => host.to_string(),
+    }
+}
+
+pub(crate) fn port() -> Result<u16> {
+    match env::var(PORT_ENV_VAR) {
+        Ok(raw) => raw
+            .parse::<u16>()
+            .with_context(|| format!("{PORT_ENV_VAR} must be a valid TCP port")),
+        Err(env::VarError::NotPresent) => Ok(DEFAULT_PORT),
+        Err(error) => Err(error).with_context(|| format!("failed to read {PORT_ENV_VAR}")),
+    }
+}
+
+fn port_or_default() -> u16 {
+    port().unwrap_or(DEFAULT_PORT)
+}
+
+pub(crate) fn server_url() -> String {
+    format!("http://{}:{}", client_host(), port_or_default())
+}
+
+pub(crate) fn export_server_url() -> String {
+    format!("http://localhost:{}", port_or_default())
+}
 
 #[derive(Clone)]
 pub(crate) struct AppState {

@@ -6,8 +6,8 @@ use crate::{
     agent::run_agent_dispatch,
     api::{
         AgentKind, AppState, CommentDispatchStatus, CommentDispatchView, CommentRequest, DiffHunk,
-        EXPORT_SERVER_URL, HunkCommentContext, HunkView, RepoSession, SERVER_URL,
-        SidebarCommentView, with_session,
+        HunkCommentContext, HunkView, RepoSession, SidebarCommentView, export_server_url,
+        server_url, with_session,
     },
     git::collect_hunks,
 };
@@ -244,7 +244,8 @@ pub(crate) fn build_export_text(session_id: &str, hunks: &[HunkView]) -> String 
             out.push('\n');
             out.push_str("Poke this url when done: ");
             out.push_str(&format!(
-                "{EXPORT_SERVER_URL}/api/session/{session_id}/resolve/{}/{comment_index}",
+                "{}/api/session/{session_id}/resolve/{}/{comment_index}",
+                export_server_url(),
                 hunk.id
             ));
             out.push('\n');
@@ -411,7 +412,7 @@ pub(crate) fn plan_batched_comment_dispatches(
     Ok(vec![DispatchJob {
         session_id: session_id.to_string(),
         repo_path: session.repo_path.clone(),
-        ui_url: format!("{SERVER_URL}/review/{session_id}"),
+        ui_url: format!("{}/review/{session_id}", server_url()),
         agent: session.selected_agent,
         targets,
     }])
@@ -529,7 +530,7 @@ fn build_dispatch_job(
     DispatchJob {
         session_id: session_id.to_string(),
         repo_path: session.repo_path.clone(),
-        ui_url: format!("{SERVER_URL}/review/{session_id}"),
+        ui_url: format!("{}/review/{session_id}", server_url()),
         agent: session.selected_agent,
         targets: vec![build_dispatch_target(hunk_id, hunk, entry)],
     }

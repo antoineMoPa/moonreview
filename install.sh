@@ -3,9 +3,6 @@
 set -eu
 
 REPO="${MOONREVIEW_REPO:-antoineMoPa/moonreview}"
-ASSET_BASENAME="moonreview-aarch64-apple-darwin"
-ARCHIVE_NAME="${ASSET_BASENAME}.tar.gz"
-CHECKSUM_NAME="${ARCHIVE_NAME}.sha256"
 INSTALL_DIR="${MOONREVIEW_INSTALL_DIR:-$HOME/.local/bin}"
 INSTALL_PATH="${INSTALL_DIR}/moonreview"
 DOWNLOAD_BASE_URL="${MOONREVIEW_DOWNLOAD_BASE_URL:-}"
@@ -65,10 +62,18 @@ verify_platform() {
     os="$(uname -s)"
     arch="$(uname -m)"
 
-    if [ "$os" != "Darwin" ] || [ "$arch" != "arm64" ]; then
-        echo "moonreview installer currently supports macOS arm64 only (detected ${os} ${arch})." >&2
-        exit 1
-    fi
+    case "${os}:${arch}" in
+        Darwin:arm64)
+            echo "moonreview-aarch64-apple-darwin"
+            ;;
+        Linux:x86_64 | Linux:amd64)
+            echo "moonreview-x86_64-unknown-linux-gnu"
+            ;;
+        *)
+            echo "moonreview installer supports macOS arm64 and Linux amd64 only (detected ${os} ${arch})." >&2
+            exit 1
+            ;;
+    esac
 }
 
 checksum_cmd() {
@@ -89,7 +94,9 @@ need_cmd curl
 need_cmd tar
 need_cmd mktemp
 
-verify_platform
+ASSET_BASENAME="$(verify_platform)"
+ARCHIVE_NAME="${ASSET_BASENAME}.tar.gz"
+CHECKSUM_NAME="${ARCHIVE_NAME}.sha256"
 
 SUM_CMD="$(checksum_cmd)"
 if [ -z "$SUM_CMD" ]; then

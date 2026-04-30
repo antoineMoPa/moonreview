@@ -58,7 +58,10 @@ type ReviewStoreAction =
   | { type: "batch_draft_comments_set"; value: boolean };
 
 const ReviewStoreContext = createContext<ReviewStoreValue | null>(null);
-const EXPORT_SERVER_URL = "http://localhost:42000";
+
+function exportServerUrl(): string {
+  return window.location.origin.replace("127.0.0.1", "localhost");
+}
 
 function buildExportText(hunks: Hunk[]): string {
   const lines = ["Moon Review notes", "=================", "Please fix these code issues and mark as resolved:", ""];
@@ -77,7 +80,7 @@ function buildExportText(hunks: Hunk[]): string {
       lines.push(`Selected code: ${entry.selection}`);
       lines.push(`Issue: ${entry.comment}`);
       lines.push(
-        `Poke this url when done: ${EXPORT_SERVER_URL}/api/session/${sessionId}/resolve/${hunk.id}/${commentIndex}`,
+        `Poke this url when done: ${exportServerUrl()}/api/session/${sessionId}/resolve/${hunk.id}/${commentIndex}`,
       );
       lines.push("");
     }

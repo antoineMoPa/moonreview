@@ -11,7 +11,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use reqwest::blocking::Client;
 
 use crate::{
-    api::{DiffTarget, HOST, OpenSessionRequest, PORT, SERVER_URL, SessionOpened},
+    api::{DiffTarget, OpenSessionRequest, SessionOpened, client_host, port, server_url},
     git::{canonicalize_repo, list_changed_submodule_repos, parse_review_target},
     server,
 };
@@ -55,7 +55,7 @@ fn launch_review(raw_target: Option<String>, logs: bool) -> Result<()> {
 }
 
 fn launch_review_with_foreground_server(repo_path: PathBuf, diff_target: DiffTarget) -> Result<()> {
-    if server_is_running() {
+    if server_is_running()? {
         bail!("moonreview server already running; stop it first to use --logs in the foreground");
     }
 
@@ -69,7 +69,7 @@ fn launch_review_with_foreground_server(repo_path: PathBuf, diff_target: DiffTar
     });
 
     for _ in 0..30 {
-        if server_is_running() {
+        if server_is_running()? {
             open_review_session(&repo_path, diff_target)?;
             return server_thread
                 .join()
@@ -78,7 +78,7 @@ fn launch_review_with_foreground_server(repo_path: PathBuf, diff_target: DiffTar
         thread::sleep(Duration::from_millis(150));
     }
 
-    bail!("review server did not become ready on {SERVER_URL}")
+    bail!("review server did not become ready on {}", server_url())
 }
 
 fn open_review_session(repo_path: &Path, diff_target: DiffTarget) -> Result<()> {
@@ -109,7 +109,7 @@ fn open_review_url_for_session(repo_path: &Path, diff_target: &DiffTarget) -> Re
         .context("failed to create client")?;
 
     let opened: SessionOpened = client
-        .post(format!("{SERVER_URL}/api/session/open"))
+        .post(format!("{}/api/session/open", server_url()))
         .json(&OpenSessionRequest {
             repo_path: repo_path.display().to_string(),
             diff_target: Some(diff_target.clone()),
@@ -121,7 +121,7 @@ fn open_review_url_for_session(repo_path: &Path, diff_target: &DiffTarget) -> Re
         .json()
         .context("failed to decode session response")?;
 
-    Ok(format!("{SERVER_URL}/review/{}", opened.session_id))
+    Ok(format!("{}/review/{}", server_url(), opened.session_id))
 }
 
 fn parse_cli_args(args: Vec<String>) -> Result<CliCommand> {
@@ -184,7 +184,7 @@ Use `branch:pathspec` to limit the diff to part of the repo, for example `dev:./
 }
 
 fn ensure_server_running(logs: bool) -> Result<()> {
-    if server_is_running() {
+    if server_is_running()? {
         if logs {
             eprintln!(
                 "moonreview server already running; restart it to attach logs to this terminal"
@@ -206,15 +206,15 @@ fn ensure_server_running(logs: bool) -> Result<()> {
     }
 
     for _ in 0..30 {
-        if server_is_running() {
+        if server_is_running()? {
             return Ok(());
         }
         thread::sleep(Duration::from_millis(150));
     }
 
-    bail!("review server did not become ready on {SERVER_URL}")
+    bail!("review server did not become ready on {}", server_url())
 }
 
-fn server_is_running() -> bool {
-    TcpStream::connect((HOST, PORT)).is_ok()
+fn server_is_running() -> Result<bool> {
+    Ok(TcpStream::connect((client_host(), port()?)).is_ok())
 }

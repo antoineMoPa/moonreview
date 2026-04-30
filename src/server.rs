@@ -15,9 +15,9 @@ use axum::{
 
 use crate::{
     api::{
-        AgentKind, AppError, AppState, FileContentPayload, FileQuery, HOST, HunkView,
-        OpenSessionRequest, PORT, PatchPayload, RepoSession, SelectionRequest, ServerState,
-        SessionOpened, SessionPayload,
+        AgentKind, AppError, AppState, FileContentPayload, FileQuery, HunkView,
+        OpenSessionRequest, PatchPayload, RepoSession, SelectionRequest, ServerState,
+        SessionOpened, SessionPayload, bind_host, port, server_url,
     },
     comments::{
         anchored_comment_key, anchored_comments_only, build_anchored_comment_value,
@@ -98,11 +98,13 @@ pub(crate) async fn run_server() -> Result<()> {
             last_activity: Arc::clone(&last_activity),
         });
 
-    let listener = tokio::net::TcpListener::bind((HOST, PORT))
+    let port = port()?;
+    let host = bind_host();
+    let listener = tokio::net::TcpListener::bind((host.as_str(), port))
         .await
-        .with_context(|| format!("failed to bind {HOST}:{PORT}"))?;
+        .with_context(|| format!("failed to bind {host}:{port}"))?;
 
-    println!("Moon Review listening on {}", crate::api::SERVER_URL);
+    println!("Moon Review listening on {}", server_url());
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal(last_activity))
         .await
