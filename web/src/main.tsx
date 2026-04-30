@@ -11,6 +11,7 @@ import { Header } from "./components/Header";
 import { LeftSidebar } from "./components/LeftSidebar";
 import { Hunks } from "./components/hunks/Hunks";
 import { ReviewStoreProvider, useReviewStore } from "./reviewStore";
+import { ThemeProvider, useTheme } from "./theme";
 import type { AgentKind, Hunk, SessionState } from "./types";
 
 const AGENT_STORAGE_KEY = "moonreview:selected-agent";
@@ -81,6 +82,15 @@ function requestedLineNumberFromHash(hash: string): number | null {
 }
 
 function FullFileView() {
+  return (
+    <ThemeProvider>
+      <FullFileViewContent />
+    </ThemeProvider>
+  );
+}
+
+function FullFileViewContent() {
+  const { theme } = useTheme();
   const [session, setSession] = useState<SessionState | null>(null);
   const [content, setContent] = useState("");
   const [loadError, setLoadError] = useState("");
@@ -155,7 +165,7 @@ function FullFileView() {
 
   return (
     <>
-      <Toaster closeButton position="bottom-right" richColors />
+      <Toaster closeButton position="bottom-right" richColors theme={theme} />
       <Header repoName={session?.repo_name} branchName={session?.branch_name} />
       <main>
         <section className="panel full-file-view">
@@ -199,6 +209,15 @@ function FullFileView() {
 }
 
 function AppContent() {
+  return (
+    <ThemeProvider>
+      <AppContentInner />
+    </ThemeProvider>
+  );
+}
+
+function AppContentInner() {
+  const { theme } = useTheme();
   const {
     state: { data, loadError },
     actions,
@@ -372,15 +391,8 @@ function AppContent() {
   if (!data) {
     return (
       <>
-        <Toaster closeButton position="bottom-right" richColors />
-        <header>
-          <div className="header-inner">
-            <div>
-              <h1>🌚 moonreview</h1>
-              <div className="meta">Loading...</div>
-            </div>
-          </div>
-        </header>
+        <Toaster closeButton position="bottom-right" richColors theme={theme} />
+        <Header />
         <main>
           <section className="panel">
             <div className={loadError ? "panel-message panel-message-error" : "panel-message"}>
@@ -394,7 +406,7 @@ function AppContent() {
 
   return (
     <>
-      <Toaster closeButton position="bottom-right" richColors />
+      <Toaster closeButton position="bottom-right" richColors theme={theme} />
       <Header repoName={data.repo_name} branchName={data.branch_name} />
       <main>
         <div className="review-layout">

@@ -19,7 +19,7 @@
   overflow: auto;
   border: 1px solid var(--line);
   border-radius: 3px;
-  background: #fffdf9;
+  background: var(--code-bg);
   color: var(--code);
   font-family: monospace;
   font-size: var(--full-file-font-size);
@@ -30,12 +30,12 @@
   position: sticky;
   left: 0;
   z-index: 1;
-  border-right: 1px solid rgba(49, 42, 34, 0.08);
-  background: rgba(49, 42, 34, 0.04);
+  border-right: 1px solid var(--diff-gutter-line);
+  background: var(--diff-gutter-bg);
 }
 
 .full-file-line-target {
-  background: rgba(183, 82, 45, 0.08);
+  background: var(--line-target-bg);
 }
 
 .full-file-line-number {

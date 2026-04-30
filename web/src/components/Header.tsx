@@ -1,3 +1,5 @@
+import { useTheme } from "../theme";
+
 type HeaderProps = {
   repoName?: string | null;
   branchName?: string | null;
@@ -12,7 +14,9 @@ function formatRepoLabel(repoName?: string | null, branchName?: string | null): 
 }
 
 export function Header({ repoName, branchName }: HeaderProps) {
+  const { theme, toggleTheme } = useTheme();
   const repoLabel = formatRepoLabel(repoName, branchName);
+  const nextTheme = theme === "dark" ? "light" : "dark";
 
   return (
     <header>
@@ -20,7 +24,21 @@ export function Header({ repoName, branchName }: HeaderProps) {
         <div>
           <h1>🌚 moonreview</h1>
         </div>
-        {repoLabel ? <div className="header-repo-name">{repoLabel}</div> : null}
+        <div className="header-actions">
+          {repoLabel ? <div className="header-repo-name">{repoLabel}</div> : null}
+          <button
+            type="button"
+            className="theme-toggle"
+            onClick={toggleTheme}
+            aria-label={`Switch to ${nextTheme} mode`}
+            title={`Switch to ${nextTheme} mode`}
+          >
+            <span className="theme-toggle-icon" aria-hidden="true">
+              {theme === "dark" ? "☀" : "☾"}
+            </span>
+            <span>{theme === "dark" ? "Light" : "Dark"}</span>
+          </button>
+        </div>
       </div>
     </header>
   );
