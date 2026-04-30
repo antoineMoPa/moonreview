@@ -5,9 +5,6 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-PACKAGE_VERSION="$(awk -F '"' '$1 == "version = " { print $2; exit }' Cargo.toml)"
-TAG="v$PACKAGE_VERSION"
-
 if (($# > 0)); then
     echo "usage: scripts/bin-release.sh" >&2
     exit 1

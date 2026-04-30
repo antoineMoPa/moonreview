@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-PACKAGE_VERSION="$(awk -F '"' '$1 == "version = " { print $2; exit }' Cargo.toml)"
+PACKAGE_VERSION="$(node -p "require('./package.json').version")"
 TAG="v$PACKAGE_VERSION"
 OUTPUT_DIR="$ROOT_DIR/target/release-artifacts/$TAG"
 TARGET_TRIPLES=(
