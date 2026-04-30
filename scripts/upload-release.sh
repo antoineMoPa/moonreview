@@ -24,8 +24,8 @@ if [ ! -f "$ARCHIVE_PATH" ] || [ ! -f "$CHECKSUM_PATH" ]; then
 fi
 
 if gh release view "$TAG" >/dev/null 2>&1; then
-    echo "Uploading assets to existing release $TAG..."
-    gh release upload "$TAG" "$ARCHIVE_PATH" "$CHECKSUM_PATH" --clobber
+    echo "release $TAG already exists; run 'npm version minor' before uploading release assets" >&2
+    exit 1
 else
     echo "Creating release $TAG and uploading assets..."
     gh release create "$TAG" "$ARCHIVE_PATH" "$CHECKSUM_PATH" \
