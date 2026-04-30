@@ -9,10 +9,13 @@ PACKAGE_VERSION="$(node -p "require('./package.json').version")"
 TAG="v$PACKAGE_VERSION"
 OUTPUT_DIR="$ROOT_DIR/target/release-artifacts/$TAG"
 MACOS_TARGET_TRIPLE="aarch64-apple-darwin"
-LINUX_TARGET_TRIPLE="x86_64-unknown-linux-gnu"
+LINUX_TARGET_TRIPLES=(
+    "x86_64-unknown-linux-gnu"
+    "aarch64-unknown-linux-gnu"
+)
 RUST_TOOLCHAIN="${MOONREVIEW_RUST_TOOLCHAIN:-1.95.0}"
 LINUX_DOCKER_BASE_IMAGE="${MOONREVIEW_LINUX_DOCKER_BASE_IMAGE:-${MOONREVIEW_LINUX_DOCKER_IMAGE:-debian:bookworm}}"
-LINUX_DOCKER_BUILDER_IMAGE="${MOONREVIEW_LINUX_DOCKER_BUILDER_IMAGE:-moonreview-linux-builder:$RUST_TOOLCHAIN-$LINUX_TARGET_TRIPLE}"
+LINUX_DOCKER_BUILDER_IMAGE_PREFIX="${MOONREVIEW_LINUX_DOCKER_BUILDER_IMAGE_PREFIX:-moonreview-linux-builder}"
 
 default_linux_build_platform() {
     case "$(uname -m)" in
@@ -71,13 +74,17 @@ build_macos_arm64() {
     package_binary "$MACOS_TARGET_TRIPLE" "$ROOT_DIR/target/release/moonreview"
 }
 
-build_linux_amd64() {
+build_linux() {
+    target_triple="$1"
+    target_dir="/work/target/docker-linux-${target_triple}"
+    builder_image="${MOONREVIEW_LINUX_DOCKER_BUILDER_IMAGE:-$LINUX_DOCKER_BUILDER_IMAGE_PREFIX:$RUST_TOOLCHAIN-$target_triple}"
+
     if ! command -v docker >/dev/null 2>&1; then
-        echo "Docker is required to build $LINUX_TARGET_TRIPLE." >&2
+        echo "Docker is required to build $target_triple." >&2
         exit 1
     fi
 
-    echo "Preparing Linux builder image $LINUX_DOCKER_BUILDER_IMAGE..."
+    echo "Preparing Linux builder image $builder_image..."
     platform_args=()
     if [ -n "$LINUX_BUILD_PLATFORM" ]; then
         platform_args=(--platform "$LINUX_BUILD_PLATFORM")
@@ -86,41 +93,44 @@ build_linux_amd64() {
     docker build \
         "${platform_args[@]}" \
         --build-arg BASE_IMAGE="$LINUX_DOCKER_BASE_IMAGE" \
-        --build-arg LINUX_TARGET_TRIPLE="$LINUX_TARGET_TRIPLE" \
+        --build-arg LINUX_TARGET_TRIPLE="$target_triple" \
         --build-arg RUST_TOOLCHAIN="$RUST_TOOLCHAIN" \
-        -t "$LINUX_DOCKER_BUILDER_IMAGE" \
+        -t "$builder_image" \
         -f scripts/linux-build.Dockerfile \
         scripts
 
-    echo "Building moonreview $TAG for $LINUX_TARGET_TRIPLE with Docker..."
+    echo "Building moonreview $TAG for $target_triple with Docker..."
     docker run --rm \
         "${platform_args[@]}" \
         -e DEBIAN_FRONTEND=noninteractive \
         -e CARGO_HOME=/work/target/docker-cargo-home \
         -e RUSTUP_HOME=/opt/rust/rustup \
-        -e CARGO_TARGET_DIR=/work/target/docker-linux-amd64 \
+        -e CARGO_TARGET_DIR="$target_dir" \
+        -e CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
         -e CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc \
-        -e LINUX_TARGET_TRIPLE="$LINUX_TARGET_TRIPLE" \
+        -e LINUX_TARGET_TRIPLE="$target_triple" \
         -e HOST_UID="$(id -u)" \
         -e HOST_GID="$(id -g)" \
         -v "$ROOT_DIR:/work" \
         -w /work \
-        "$LINUX_DOCKER_BUILDER_IMAGE" \
+        "$builder_image" \
         bash -lc '
             set -euo pipefail
             export PATH="/opt/rust/cargo/bin:$PATH"
             cargo build --release --locked --target "$LINUX_TARGET_TRIPLE"
-            chown -R "$HOST_UID:$HOST_GID" /work/target/docker-linux-amd64 /work/target/docker-cargo-home /work/node_modules /work/web/dist 2>/dev/null || true
+            chown -R "$HOST_UID:$HOST_GID" "$CARGO_TARGET_DIR" /work/target/docker-cargo-home /work/node_modules /work/web/dist 2>/dev/null || true
         '
 
-    package_binary "$LINUX_TARGET_TRIPLE" "$ROOT_DIR/target/docker-linux-amd64/$LINUX_TARGET_TRIPLE/release/moonreview"
+    package_binary "$target_triple" "$ROOT_DIR/target/docker-linux-${target_triple}/$target_triple/release/moonreview"
 }
 
 mkdir -p "$OUTPUT_DIR"
 
 echo "Created release artifacts:"
 build_macos_arm64
-build_linux_amd64
+for target_triple in "${LINUX_TARGET_TRIPLES[@]}"; do
+    build_linux "$target_triple"
+done
 
 cat <<EOF
 Next step:

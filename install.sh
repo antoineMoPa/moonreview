@@ -69,8 +69,11 @@ verify_platform() {
         Linux:x86_64 | Linux:amd64)
             echo "moonreview-x86_64-unknown-linux-gnu"
             ;;
+        Linux:aarch64 | Linux:arm64)
+            echo "moonreview-aarch64-unknown-linux-gnu"
+            ;;
         *)
-            echo "moonreview installer supports macOS arm64 and Linux amd64 only (detected ${os} ${arch})." >&2
+            echo "moonreview installer supports macOS arm64, Linux amd64, and Linux arm64 only (detected ${os} ${arch})." >&2
             exit 1
             ;;
     esac

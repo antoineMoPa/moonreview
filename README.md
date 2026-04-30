@@ -24,9 +24,9 @@ moonreview
 
 Source builds require Rust plus the existing Node/npm frontend toolchain used by `build.rs`.
 
-## Easy installation on mac (arm64)
+## Easy installation
 
-Install the latest macOS Apple Silicon build:
+Install the latest prebuilt binary:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/antoineMoPa/moonreview/main/install.sh | sh

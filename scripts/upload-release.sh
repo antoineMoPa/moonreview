@@ -11,6 +11,7 @@ OUTPUT_DIR="$ROOT_DIR/target/release-artifacts/$TAG"
 TARGET_TRIPLES=(
     "aarch64-apple-darwin"
     "x86_64-unknown-linux-gnu"
+    "aarch64-unknown-linux-gnu"
 )
 ASSET_PATHS=()
 
