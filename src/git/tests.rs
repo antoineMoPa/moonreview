@@ -77,6 +77,7 @@ fn test_session(repo_root: PathBuf, active_commit: Option<String>) -> RepoSessio
         comment_contexts: HashMap::new(),
         selected_agent: AgentKind::None,
         comment_dispatches: HashMap::new(),
+        files_named_outside_the_repo: crate::lsp::FilesNamedOutsideTheRepo::default(),
     }
 }
 
@@ -237,6 +238,43 @@ fn a_file_in_the_working_tree_can_be_written_back() {
     assert_eq!(
         fs::read_to_string(repo_root.join("lib.rs")).expect("failed to read back"),
         "fn two() {}\n"
+    );
+}
+
+/// The read every file tab goes through takes paths in the repo and nothing else. A file
+/// outside it is read by [`super::read_file_named_outside_the_repo`], which is only reachable
+/// with a path a language server named - see [`crate::lsp::FilesNamedOutsideTheRepo`].
+#[test]
+fn reading_outside_the_repository_is_refused() {
+    let temp = TestDir::new();
+    let repo_root = temp.path.join("repo");
+    init_test_repo(&repo_root);
+    fs::write(temp.path.join("outside.txt"), "secrets\n").expect("failed to write");
+
+    for path in [
+        "../outside.txt",
+        temp.path
+            .join("outside.txt")
+            .display()
+            .to_string()
+            .as_str(),
+    ] {
+        let refused = super::read_repo_file(&repo_root, path);
+        assert_eq!(
+            refused
+                .err()
+                .map(|error| error.to_string())
+                .unwrap_or_default(),
+            "file path is outside the repository",
+            "{path} is not a file of the repo"
+        );
+    }
+
+    // The same file, read the one way that is allowed to name it.
+    assert_eq!(
+        super::read_file_named_outside_the_repo(&temp.path.join("outside.txt"))
+            .expect("expected the vouched-for path to read"),
+        "secrets\n"
     );
 }
 

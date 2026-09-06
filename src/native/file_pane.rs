@@ -14,7 +14,9 @@
 
 use egui::{Align, Layout, RichText, Ui};
 use egui_frames::PaneId;
-use egui_moon_code_ide::{CanAnswer, Completing, Served};
+use egui_moon_code_ide::{
+    Asked, CanAnswer, Completing, LspCompletion, Served, follows_the_caret,
+};
 use egui_moon_editor::{Editor, EditorRequest, Language, Marks};
 
 use crate::native::{
@@ -26,6 +28,10 @@ use crate::native::{
 /// Between the pane's border and what it is showing.
 const PANE_PADDING: i8 = 10;
 
+/// What the header reads on a file that is not in the repo, in place of the save it does not
+/// offer.
+const OUTSIDE_THE_REPO_NOTE: &str = "outside the repo · read-only";
+
 /// A file being read or edited, and what has happened to it since it was opened.
 pub(crate) struct FileEditor {
     pub(crate) file_path: String,
@@ -36,6 +42,11 @@ pub(crate) struct FileEditor {
     code: Editor,
     error: Option<String>,
     saving: bool,
+    /// Whether what the pane is showing is a file outside the repo - a dependency's source or
+    /// the standard library, landed on by a jump to a definition. Those are there to be read:
+    /// the header says so, and no save is offered on one. Known only once the text has
+    /// arrived, because the read is what answers it - see [`crate::lsp`].
+    outside_the_repo: bool,
     /// Whether the pane is showing the markdown rendered rather than the text of it. Only
     /// ever true for a markdown file, which is also the only kind offered the toggle.
     preview: bool,
@@ -74,6 +85,7 @@ impl FileEditor {
             code,
             error: None,
             saving: false,
+            outside_the_repo: false,
             preview,
             close_confirmed: false,
             reveal: None,
@@ -84,7 +96,8 @@ impl FileEditor {
         }
     }
 
-    /// Whether this pane's ⌘-click asks a language server before it searches the repo.
+    /// Whether this pane's ⌘-click asks a language server, which is the only thing that
+    /// answers one.
     pub(crate) fn asks_language_servers(&self) -> bool {
         self.asks_language_servers
     }
@@ -135,9 +148,15 @@ impl FileEditor {
         (&mut self.completing, can_answer)
     }
 
-    /// The completion box's state, for an answer that has just come back.
-    pub(super) fn completing_mut(&mut self) -> &mut Completing {
-        &mut self.completing
+    /// An answer about the word being typed, as it comes back off the worker.
+    ///
+    /// Handed in here rather than through the state itself because the answer is taken against
+    /// the buffer as well as against the word: what the caret sits in front of is what keeps a
+    /// call being completed over - `gre|(x)` taking `greet` - from being offered a second pair
+    /// of parentheses. The pane owns the buffer, so the pane is what can read it.
+    pub(super) fn word_answered(&mut self, asked: &Asked, rows: Option<Vec<LspCompletion>>) {
+        let follows = follows_the_caret(self.code.text(), asked.at());
+        self.completing.answered(asked, rows, follows);
     }
 
     /// What the pane is showing, once it has arrived.
@@ -180,6 +199,14 @@ impl FileEditor {
     #[cfg(test)]
     pub(crate) fn edit_for_test(&mut self, text: &str) {
         self.code.set_text(text.to_string());
+    }
+
+    /// Whether the file is one outside the repo, which is what makes the pane a reader rather
+    /// than an editor. Read in a test beside what the header drew, so that both halves of
+    /// read-only are checked rather than just the one that is easy to assert on.
+    #[cfg(test)]
+    pub(crate) fn is_outside_the_repo_for_test(&self) -> bool {
+        self.outside_the_repo
     }
 
     pub(crate) fn is_dirty(&self) -> bool {
@@ -322,6 +349,7 @@ impl App {
                         editor.saved = Some(payload.content.clone());
                         editor.code.set_text(payload.content);
                         editor.error = None;
+                        editor.outside_the_repo = payload.outside_the_repo;
                     }
                     Err(error) => editor.error = Some(format!("{error}")),
                 }
@@ -334,7 +362,10 @@ impl App {
         let Some(editor) = self.model.file_editors.get_mut(&pane_id) else {
             return;
         };
-        if editor.saving || !editor.is_dirty() {
+        // A file outside the repo is read-only, so there is nothing to write even if a chord
+        // asked for it: the write would be refused repo-side, and the refusal would read as a
+        // failure rather than as the answer it is.
+        if editor.saving || editor.outside_the_repo || !editor.is_dirty() {
             return;
         }
         editor.saving = true;
@@ -398,6 +429,7 @@ impl App {
         };
         let dirty = editor.is_dirty();
         let saving = editor.saving;
+        let outside_the_repo = editor.outside_the_repo;
         let error = editor.error.clone();
         let loaded = editor.saved.is_some();
         let markdown = is_markdown(file_path);
@@ -420,7 +452,11 @@ impl App {
                 // buttons is worse than one that ends in a "…".
                 ui.horizontal(|ui| {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if dirty && !saving && widgets::quiet_button(ui, "[save]").clicked() {
+                        if dirty
+                            && !saving
+                            && !outside_the_repo
+                            && widgets::quiet_button(ui, "[save]").clicked()
+                        {
                             self.save_file_pane(pane_id, session_id);
                         }
                         if markdown
@@ -439,7 +475,21 @@ impl App {
                         {
                             editor.preview = !previewing;
                         }
-                        if dirty {
+                        // What the pane is, said where the save would otherwise be: a jump
+                        // into a dependency opens a file this window has no business writing,
+                        // and a pane that looked like every other file tab but silently
+                        // refused to save would be worse than one that says what it is.
+                        if outside_the_repo {
+                            ui.label(
+                                RichText::new(OUTSIDE_THE_REPO_NOTE)
+                                    .size(SMALL_SIZE - 1.0)
+                                    .color(palette.muted),
+                            )
+                            .on_hover_text(
+                                "This file is not in the repository. It opened because a language server named it as where the definition is, and it can only be read.",
+                            );
+                        }
+                        if dirty && !outside_the_repo {
                             ui.label(
                                 RichText::new(if saving { "saving…" } else { "unsaved" })
                                     .size(SMALL_SIZE - 1.0)
@@ -631,6 +681,7 @@ mod tests {
             code: Editor::new(edited.to_string()),
             error: None,
             saving: false,
+            outside_the_repo: false,
             preview: false,
             close_confirmed: false,
             reveal: None,

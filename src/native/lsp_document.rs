@@ -9,7 +9,10 @@
 //! window already has a way to do blocking work and hand the answer back on a later frame,
 //! and two of those would be one too many.
 //!
-//! What the answers are then used for is [`crate::native::definition`]'s business.
+//! What the answers are then used for is [`crate::native::definition`]'s business - and a
+//! ⌘-click in a review comes back here for a document, because a review holds no buffer and
+//! has never told a server anything: opening one for the length of a question is still this
+//! module's business, and counting the panes that would be left without it is exactly why.
 
 use egui_frames::PaneId;
 use egui_moon_code_ide::{DocumentAsk, LanguageSource, LspStatus};
@@ -147,10 +150,11 @@ impl App {
                 };
                 match result {
                     Ok(()) => editor.server_heard_mut().heard(sent),
-                    // A server that could not be told is one this pane stops talking to.
-                    // Trying again every frame would be a call a frame at the exact moment
-                    // something is already wrong, and the ⌘-click has the repo to fall back
-                    // on either way.
+                    // A call that did not go through is not the end of the pane's server: the
+                    // text is offered again once a wait has run, and the wait widens with
+                    // every failure in a row. On a `--remote` review this call is a round
+                    // trip, and a link that blinks must not cost the tab its completions and
+                    // its ⌘-click until it is closed and opened again.
                     Err(_) => editor.server_heard_mut().could_not_be_told(),
                 }
             },
@@ -166,20 +170,52 @@ impl App {
         if !closed.server_heard().was_opened() {
             return;
         }
+        self.give_the_document_back(closed.file_path.clone(), session_id);
+    }
+
+    /// Whether a file pane has this file open on the server.
+    ///
+    /// Asked by a ⌘-click in a review, which has no buffer of its own and so has to open the
+    /// document itself to be answered about it - and must not, when a pane already has. A
+    /// pane's copy is that pane's buffer, unsaved edits and all, and it is the truer one: a
+    /// review telling the server the working tree's text instead would answer the pane's next
+    /// question about a file it is not showing.
+    pub(crate) fn a_pane_has_the_document_open(&self, file_path: &str) -> bool {
+        self.model
+            .file_editors
+            .values()
+            .any(|editor| editor.file_path == file_path && editor.server_heard().was_opened())
+    }
+
+    /// Give back a document that was opened only so one question could be put - a ⌘-click on a
+    /// row of a review's diff, which is the one caller here with no pane behind it.
+    ///
+    /// It goes through the same counting a closing tab does, so a document a pane is showing is
+    /// never closed underneath it. There is one lifecycle for a server's documents in this
+    /// window, and it is this one.
+    pub(crate) fn close_document_asked_about(&mut self, file_path: &str, session_id: &str) {
+        self.give_the_document_back(file_path.to_string(), session_id);
+    }
+
+    /// Tell the server a file is closed, unless a pane still has it.
+    ///
+    /// A pane that has the file but has not opened it yet counts as having it: its open is on
+    /// its way, and a close that landed after it would leave that pane asking about a document
+    /// the server has never heard of.
+    fn give_the_document_back(&mut self, file_path: String, session_id: &str) {
         if self
             .model
             .file_editors
             .values()
-            .any(|editor| editor.file_path == closed.file_path)
+            .any(|editor| editor.file_path == file_path)
         {
             return;
         }
         let for_call = session_id.to_string();
-        let file_path = closed.file_path.clone();
         self.tasks.spawn(
             move |backend| SessionLanguages::new(backend, &for_call).did_close(&file_path),
-            // Nothing to do either way: the tab is gone, and a server that did not hear the
-            // close has one stale document among the ones it is keeping anyway.
+            // Nothing to do either way: nothing is showing the file, and a server that did not
+            // hear the close has one stale document among the ones it is keeping anyway.
             move |_model, _result| {},
         );
     }

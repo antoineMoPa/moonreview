@@ -75,6 +75,10 @@ pub(crate) struct RepoSession {
     pub(crate) comment_contexts: HashMap<String, HunkCommentContext>,
     pub(crate) selected_agent: AgentKind,
     pub(crate) comment_dispatches: HashMap<String, CommentDispatchState>,
+    /// The files outside the repo a language server has named as answers to this session's
+    /// go-to-definition questions, which are the only files outside it that may be read - see
+    /// [`crate::lsp::FilesNamedOutsideTheRepo`].
+    pub(crate) files_named_outside_the_repo: crate::lsp::FilesNamedOutsideTheRepo,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -276,6 +280,10 @@ pub(crate) struct PatchPayload {
 pub(crate) struct FileContentPayload {
     pub(crate) file_path: String,
     pub(crate) content: String,
+    /// Whether this is a file outside the repo - a dependency's source or the standard
+    /// library, landed on by a jump to a definition. Those are read-only: the pane offers no
+    /// save on one, and a write to it is refused repo-side whatever the pane does.
+    pub(crate) outside_the_repo: bool,
 }
 
 #[derive(Serialize, Deserialize)]

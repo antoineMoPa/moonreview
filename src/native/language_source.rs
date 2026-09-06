@@ -33,8 +33,8 @@ impl<'a> SessionLanguages<'a> {
 
 impl LanguageSource for SessionLanguages<'_> {
     /// A status that could not be had is a file with no server, which is what every other way
-    /// of having no server already reads as: nothing more is sent about it, and the ⌘-click
-    /// falls through to the repo search the way it does for markdown.
+    /// of having no server already reads as: nothing more is sent about it, and a ⌘-click in it
+    /// says there is nothing behind the file rather than waiting on an answer nobody will give.
     fn status(&self, file_path: &str) -> LspStatus {
         self.backend
             .lsp_status(self.session_id, file_path)

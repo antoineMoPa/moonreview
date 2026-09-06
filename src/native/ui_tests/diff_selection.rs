@@ -1,5 +1,9 @@
-//! Selecting diff lines with the mouse, copying what was selected, and ⌘-clicking a name on
-//! one to land on where it is defined.
+//! Selecting diff lines with the mouse and copying what was selected.
+//!
+//! The ⌘-click on a name of a row is next door, in
+//! [`crate::native::ui_tests::diff_definition`], and reads the fixtures and the row-finding
+//! from here - the two gestures are made on the same row and must not disagree about where
+//! that row is.
 
 use std::{
     sync::{
@@ -14,7 +18,7 @@ use egui_kittest::Harness;
 use crate::native::theme::ThemeMode;
 
 use super::{
-    Fixture, app_for, click_at, click_like_a_hand, press_modifiers, seeded_fixture, settle,
+    Fixture, app_for, click_at, seeded_fixture, settle,
 };
 
 /// cmd+c over the diff copies what is selected - and copies the code, without the `+` that
@@ -404,7 +408,7 @@ fn double_clicking_a_word_selects_and_copies_it() {
 ///
 /// The call is the whole of the added line, so the click lands inside the name at a spot that
 /// does not depend on how the row was laid out.
-fn calling_fixture(name: &str) -> Fixture {
+pub(super) fn calling_fixture(name: &str) -> Fixture {
     let fixture = Fixture::new(name);
     fixture.write(
         "src/lib.rs",
@@ -416,14 +420,19 @@ fn calling_fixture(name: &str) -> Fixture {
     fixture
 }
 
-/// The added row of the one hunk, and where in the window it was drawn.
-fn added_row_at(harness: &egui_kittest::Harness<'_>, hunk_id: &str, patch: &str) -> egui::Pos2 {
+/// The row of the one hunk of `kind`, and where in the window it was drawn.
+pub(super) fn row_at(
+    harness: &egui_kittest::Harness<'_>,
+    hunk_id: &str,
+    patch: &str,
+    kind: crate::native::review::diff::LineKind,
+) -> egui::Pos2 {
     let lines = crate::native::review::diff::build_diff_lines(patch);
     let (index, _) = lines
         .iter()
         .enumerate()
-        .find(|(_, line)| line.kind == crate::native::review::diff::LineKind::Added)
-        .expect("expected an added line in the diff");
+        .find(|(_, line)| line.kind == kind)
+        .unwrap_or_else(|| panic!("expected a {kind:?} line in the diff"));
     let rect = harness
         .ctx
         .read_response(crate::native::review::hunks::diff_line_id(hunk_id, index))
@@ -436,119 +445,26 @@ fn added_row_at(harness: &egui_kittest::Harness<'_>, hunk_id: &str, patch: &str)
     )
 }
 
-/// What the review pane's state looks like from outside the frame that draws it.
-#[derive(Default)]
-struct SeenInDiff {
-    hunk_id: Option<String>,
-    patch: String,
-    /// Whether the file that defines the clicked name is open, its text has arrived, and the
-    /// find bar has laid the name out on it - the whole landing rather than the tab appearing,
-    /// so a slow machine settles on the same picture a fast one does.
-    landed: bool,
-    drafts: usize,
-    file_panes: usize,
+/// The added row of the one hunk, and where in the window it was drawn.
+pub(super) fn added_row_at(harness: &egui_kittest::Harness<'_>, hunk_id: &str, patch: &str) -> egui::Pos2 {
+    row_at(
+        harness,
+        hunk_id,
+        patch,
+        crate::native::review::diff::LineKind::Added,
+    )
 }
 
-/// ⌘-clicking a name on a diff row lands on where it is defined, the same as it does in a
-/// file tab: the repo is searched, the line that defines the name wins over the line that
-/// calls it, and that file opens at it - without the click also selecting the line.
-#[test]
-fn a_command_clicked_name_in_a_diff_opens_the_file_that_defines_it() {
-    let fixture = calling_fixture("diff-definition");
-    let mut app = app_for(&fixture.root, ThemeMode::Dark);
-
-    let seen = Arc::new(Mutex::new(SeenInDiff::default()));
-    let seen_in_ui = Arc::clone(&seen);
-    let ready = Arc::new(AtomicBool::new(false));
-    let ready_in_ui = Arc::clone(&ready);
-    let landed = Arc::new(AtomicBool::new(false));
-    let landed_in_ui = Arc::clone(&landed);
-
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(1400.0, 880.0))
-        .wgpu()
-        .build_ui(move |ui| {
-            app.draw(ui);
-            let defined = app.model.layout.panes().find_map(|(pane_id, pane)| {
-                matches!(pane, crate::native::panes::Pane::File { file_path, .. }
-                    if file_path == "src/lib.rs")
-                .then_some(pane_id)
-            });
-            let landing = defined.is_some_and(|pane_id| {
-                app.model
-                    .file_editors
-                    .get(&pane_id)
-                    .is_some_and(|editor| editor.content_for_test().is_some())
-            }) && app
-                .model
-                .find
-                .as_ref()
-                .is_some_and(|find| find.total > 0 && !find.pending);
-            let Some(review) = app.model.review_ref(&app.model.root_session_id) else {
-                return;
-            };
-            if let Ok(mut seen) = seen_in_ui.lock() {
-                if let Some(hunk) = review.hunks().first() {
-                    seen.hunk_id = Some(hunk.id.clone());
-                    seen.patch = hunk.patch_preview.clone();
-                }
-                seen.drafts = review.drafts.len();
-                seen.landed = landing;
-            }
-            landed_in_ui.store(landing, Ordering::Relaxed);
-            ready_in_ui.store(review.payload.is_some(), Ordering::Relaxed);
-        });
-
-    assert!(
-        settle(&mut harness, || ready.load(Ordering::Relaxed)),
-        "the review never loaded"
-    );
-    harness.run_steps(2);
-
-    let (hunk_id, patch) = {
-        let state = seen.lock().expect("poisoned");
-        (
-            state.hunk_id.clone().expect("expected a hunk"),
-            state.patch.clone(),
-        )
-    };
-    let at = added_row_at(&harness, &hunk_id, &patch);
-
-    press_modifiers(&mut harness, egui::Modifiers::COMMAND);
-    // The name reads as clickable before it is clicked: with ⌘ down and the pointer on it, the
-    // row underlines the name and asks for the pointing hand. A jump nobody can see is there
-    // is a jump nobody finds.
-    harness
-        .input_mut()
-        .events
-        .push(egui::Event::PointerMoved(at));
-    harness.run_steps(2);
-    assert_eq!(
-        harness.output().platform_output.cursor_icon,
-        egui::CursorIcon::PointingHand,
-        "⌘ over a name on a diff row should read as a link"
-    );
-
-    click_like_a_hand(&mut harness, at, egui::Modifiers::COMMAND);
-    press_modifiers(&mut harness, egui::Modifiers::NONE);
-
-    assert!(
-        settle(&mut harness, || landed.load(Ordering::Relaxed)),
-        "the file that defines the name never opened"
-    );
-    assert_eq!(
-        seen.lock().expect("poisoned").drafts,
-        0,
-        "a ⌘-click is a jump, not the start of a comment"
-    );
-
-    harness
-        .ctx
-        .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
-    // Long enough for the scroll bar the landing brought up to fade back out - a handful of
-    // frames catches it mid-fade, which is a different picture on every machine.
-    harness.run_steps(30);
-    harness.snapshot("diff-definition-jump");
+/// What the review pane's state looks like from outside the frame that draws it.
+#[derive(Default)]
+pub(super) struct SeenInDiff {
+    pub(super) hunk_id: Option<String>,
+    pub(super) patch: String,
+    /// Every message the window has up. A ⌘-click that cannot be answered has to say so, and
+    /// what it says is the whole of what happened.
+    pub(super) said: Vec<String>,
+    pub(super) drafts: usize,
+    pub(super) file_panes: usize,
 }
 
 /// The plain click is untouched by the jump: it still selects the whole line and opens the

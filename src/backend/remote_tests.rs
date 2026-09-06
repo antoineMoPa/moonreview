@@ -311,6 +311,60 @@ fn task_notes_round_trip_over_http() {
     assert_eq!(content.content, "what the fix is about\n");
 }
 
+/// The read this route serves is a read of somebody else's disk, so a path no language server
+/// ever named is refused over the wire the way it is refused in process: a credential file by
+/// its absolute path, and a walk out of the repo with `..`. This is the one that matters -
+/// every other test of the allow-list is in the same process as the state it is asserting on,
+/// and this one is the shape a real attempt would take.
+#[test]
+fn a_file_outside_the_repo_is_refused_over_http() {
+    let served = serve_a_repo("outside-the-repo");
+    let secret = served.root.with_file_name(format!(
+        "{}-secret.txt",
+        served
+            .root
+            .file_name()
+            .expect("the fixture repo has a name")
+            .to_string_lossy()
+    ));
+    fs::write(&secret, "a private key\n").expect("failed to write the fixture secret");
+    let backend = RemoteBackend::connect(&served.base_url).expect("expected to reach the server");
+    let opened = backend
+        .open_session(OpenSessionRequest {
+            repo_path: served.root.display().to_string(),
+            diff_target: None,
+            active_commit: None,
+        })
+        .expect("expected the remote session to open");
+
+    for path in [
+        "/etc/passwd".to_string(),
+        "../../../etc/passwd".to_string(),
+        secret.display().to_string(),
+        format!(
+            "../{}",
+            secret
+                .file_name()
+                .expect("the fixture secret has a name")
+                .to_string_lossy()
+        ),
+    ] {
+        assert!(
+            backend.file_content(&opened.session_id, &path).is_err(),
+            "{path} is not in the repo and no language server named it"
+        );
+    }
+
+    // The repo's own files still read, and read as files of the repo.
+    let inside = backend
+        .file_content(&opened.session_id, "main.rs")
+        .expect("expected the repo's own file to read");
+    assert!(inside.content.contains("fn main()"));
+    assert!(!inside.outside_the_repo);
+
+    let _ = fs::remove_file(&secret);
+}
+
 #[test]
 fn an_unreachable_address_fails_with_the_address_in_the_message() {
     // Port 1 is reserved and nothing listens there, so this is a connection refusal.

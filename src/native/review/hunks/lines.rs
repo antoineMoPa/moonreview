@@ -19,7 +19,8 @@ use crate::{
 };
 
 use super::actions::{
-    current_selection, draw_truncation_notice, jump_to_definition, select_and_open,
+    RowUnderThePointer, current_selection, draw_truncation_notice, jump_to_definition,
+    select_and_open,
 };
 use super::comments::{draw_composer, draw_inline_comment};
 use super::{GUTTER_WIDTH, LINE_HEIGHT, body_text_x, column_at, diff_line_id, word_bounds_at};
@@ -218,10 +219,13 @@ fn draw_diff_line(
         app,
         ui,
         session_id,
-        rect,
-        line,
-        &response,
-        palette.diff_line_ink(line.kind.prefix()),
+        &hunk.file_path,
+        RowUnderThePointer {
+            rect,
+            line,
+            response: &response,
+            ink: palette.diff_line_ink(line.kind.prefix()),
+        },
     ) {
         return;
     }

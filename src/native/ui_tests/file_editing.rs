@@ -226,3 +226,155 @@ fn the_save_button_and_the_chord_write_the_file() {
         fs::read_to_string(fixture.root.join("src/lib.rs"))
     );
 }
+
+/// A file the jump to a definition landed on outside the repo opens read-only: the header says
+/// where it is rather than letting it look like every other file tab, and no `[save]` is
+/// offered even once it has been typed into.
+///
+/// The window is built over a state this test holds, so that the one thing that makes such a
+/// file readable at all can be arranged the way a language server arranges it - by naming the
+/// file as where a definition is. Everything after that is the pane doing what it does with
+/// what came back.
+#[test]
+fn a_file_outside_the_repo_opens_read_only_and_offers_no_save() {
+    use egui_kittest::kittest::Queryable as _;
+
+    let fixture = Fixture::new("file-outside-the-repo");
+    fixture.write("src/lib.rs", "pub fn one() {}\n");
+    fixture.commit("Add the library");
+
+    // A dependency's source, next to the repo rather than in it - which is where a jump into
+    // `~/.cargo` lands.
+    let dependency = fixture
+        .root
+        .with_file_name("registry")
+        .join("dep/src/lib.rs");
+    fs::create_dir_all(dependency.parent().expect("a path has a parent"))
+        .expect("failed to create the dependency directory");
+    fs::write(&dependency, "pub fn dep() {}\n").expect("failed to write the dependency");
+    let dependency = dependency.display().to_string();
+
+    let state = crate::server::build_state(Arc::new(Mutex::new(Instant::now())));
+    let open = crate::api::OpenSessionRequest {
+        repo_path: fixture.root.display().to_string(),
+        diff_target: None,
+        active_commit: None,
+    };
+    let session_id = crate::service::open_session(
+        &state,
+        crate::api::OpenSessionRequest {
+            repo_path: open.repo_path.clone(),
+            diff_target: None,
+            active_commit: None,
+        },
+    )
+    .expect("failed to open the session")
+    .session_id;
+    // What a language server answered with, which is the only thing that makes a file out
+    // there readable - see [`crate::lsp::FilesNamedOutsideTheRepo`].
+    crate::lsp::remember_files_named(
+        &state,
+        &session_id,
+        &[crate::api::LspLocation {
+            file_path: dependency.clone(),
+            line_number: 1,
+        }],
+    )
+    .expect("failed to record what the server named");
+
+    let mut app = crate::native::app::App::new(
+        egui::Context::default(),
+        crate::native::Launch {
+            backend: Arc::new(crate::backend::local::LocalBackend::new(state)),
+            open: Some(open),
+            frame: crate::cli::Frame::Review,
+        },
+    );
+    app.set_theme(ThemeMode::Dark);
+
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_ui = Arc::clone(&opened);
+    let read_only = Arc::new(AtomicBool::new(false));
+    let read_only_in_ui = Arc::clone(&read_only);
+    let loaded = Arc::new(AtomicBool::new(false));
+    let loaded_in_ui = Arc::clone(&loaded);
+    let on_screen = Arc::new(Mutex::new(None::<String>));
+    let on_screen_in_ui = Arc::clone(&on_screen);
+    let for_pane = dependency.clone();
+
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 760.0))
+        .wgpu()
+        .build_ui(move |ui| {
+            if !opened_in_ui.load(Ordering::Relaxed)
+                && matches!(app.model.stage, crate::native::model::Stage::Ready)
+            {
+                let session_id = app.model.root_session_id.clone();
+                app.open_file_pane(&session_id, &for_pane);
+                opened_in_ui.store(true, Ordering::Relaxed);
+            }
+            app.draw(ui);
+            if let Some((id, _)) = app
+                .model
+                .layout
+                .find_pane(|pane| matches!(pane, Pane::File { .. }))
+                && let Some(editor) = app.model.file_editors.get(&id)
+            {
+                loaded_in_ui.store(editor.content_for_test().is_some(), Ordering::Relaxed);
+                read_only_in_ui.store(editor.is_outside_the_repo_for_test(), Ordering::Relaxed);
+                *on_screen_in_ui.lock().expect("poisoned") =
+                    Some(editor.text_for_test().to_string());
+            }
+        });
+
+    assert!(
+        settle(&mut harness, || loaded.load(Ordering::Relaxed)),
+        "the dependency never loaded"
+    );
+    harness.run_steps(2);
+
+    assert_eq!(
+        on_screen.lock().expect("poisoned").clone(),
+        Some("pub fn dep() {}\n".to_string()),
+        "the pane should be showing the file the server named"
+    );
+    assert!(
+        read_only.load(Ordering::Relaxed),
+        "a file outside the repo is read-only"
+    );
+    // The header note, in place of the save it does not offer.
+    assert!(
+        harness
+            .query_by_label("outside the repo · read-only")
+            .is_some(),
+        "the pane should say the file is not in the repo"
+    );
+    assert!(
+        harness.query_by_label("[save]").is_none(),
+        "a file outside the repo is not saved from here"
+    );
+
+    // And still not, once it has been typed into: the text is editable, the file is not.
+    press_key(&mut harness, egui::Key::Escape, egui::Modifiers::NONE);
+    harness
+        .get_by_role(egui::accesskit::Role::MultilineTextInput)
+        .click();
+    harness.run_steps(2);
+    press_key(&mut harness, egui::Key::End, egui::Modifiers::NONE);
+    super::type_letter(&mut harness, egui::Key::X, "x");
+
+    assert_ne!(
+        on_screen.lock().expect("poisoned").clone(),
+        Some("pub fn dep() {}\n".to_string()),
+        "the typing should have reached the text on screen"
+    );
+    assert!(
+        harness.query_by_label("[save]").is_none(),
+        "an edited file outside the repo still offers no way to write it"
+    );
+    assert_eq!(
+        fs::read_to_string(&dependency).expect("failed to read the dependency back"),
+        "pub fn dep() {}\n",
+        "and nothing may have reached the dependency on disk"
+    );
+}

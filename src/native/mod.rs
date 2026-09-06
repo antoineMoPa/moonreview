@@ -9,7 +9,6 @@ pub(crate) mod commit_pane;
 mod commit_pane_tests;
 pub(crate) mod completing;
 pub(crate) mod definition;
-mod definition_ranking;
 pub(crate) mod file_pane;
 pub(crate) mod find;
 pub(crate) mod fonts;

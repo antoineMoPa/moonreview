@@ -10,7 +10,9 @@
 //!
 //! There is one exception, at the bottom, and it is marked `#[ignore]` for exactly that
 //! reason: `typing_in_a_real_crate_offers_what_rust_analyzer_knows` starts rust-analyzer on a
-//! throwaway cargo crate and types into it. Everything above proves each half in isolation -
+//! throwaway cargo crate and types into it. (The ⌘-click's own real-server test lives beside
+//! the review that makes it, in `crate::native::ui_tests::diff_selection`, and is ignored for
+//! the same reason.) Everything above proves each half in isolation -
 //! the pane's side here, the protocol's side in the `moon_lsp` crate, the popup's in the editor
 //! crate - and none of it proves the whole of it works in one window, which is the only thing
 //! anyone is actually shipping. So that test exists, and is run on purpose with
@@ -30,137 +32,45 @@ use crate::native::{panes::Pane, theme::ThemeMode};
 
 use super::{Fixture, app_for, press_key, settle};
 
-/// ⌘-clicking a name in a file lands on where it is defined: the repo is searched for the
-/// name, the one line that reads as its definition wins over the line that only calls it, and
-/// that file opens at it with the name marked - all without a language server anywhere.
+/// ⌘-clicking a name in a file no language server serves says so and jumps nowhere.
+///
+/// The only thing that answers a ⌘-click is a language server - see
+/// [`crate::native::definition`] - so a file nothing serves has no answer to give, and the
+/// click says which file and which name rather than going quiet. Silence would read as the
+/// gesture being broken, which for most of a repo it would be a lie about.
+///
+/// The pane's language-server side is switched on for this - the suite keeps it off, so that a
+/// `.rs` pane in a test does not start the rust-analyzer the machine really has - and pointed
+/// at a `.txt` file, which nothing serves. That is both the honest way to test this without a
+/// server and the state most of a repo is really in.
+///
+/// There is no picture of it, where the jump this replaced had one: what the click produces is a
+/// message, and the window stamps every message it logs with the time of day, so a snapshot of
+/// one is a different image every second.
 #[test]
-fn a_command_clicked_name_opens_the_file_that_defines_it() {
-    use egui_kittest::kittest::Queryable as _;
-
-    let fixture = Fixture::new("file-definition");
-    fixture.write(
-        "src/lib.rs",
-        "pub fn greet(name: &str) -> String {\n    format!(\"hello {name}\")\n}\n",
-    );
-    // The call is the first thing on the first line, so the click has a name to land on at a
-    // spot that does not depend on how the text was laid out.
-    fixture.write(
-        "src/main.rs",
-        "greet(\"moon\");\n\nfn main() {\n    println!(\"{}\", greet(\"moon\"));\n}\n",
-    );
-    fixture.commit("Add the library and the program");
-
-    let mut app = app_for(&fixture.root, ThemeMode::Dark);
-    let opened = Arc::new(AtomicBool::new(false));
-    let opened_in_ui = Arc::clone(&opened);
-    let loaded = Arc::new(AtomicBool::new(false));
-    let loaded_in_ui = Arc::clone(&loaded);
-    let defining = Arc::new(AtomicBool::new(false));
-    let defining_in_ui = Arc::clone(&defining);
-
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(1200.0, 760.0))
-        .wgpu()
-        .build_ui(move |ui| {
-            if !opened_in_ui.load(Ordering::Relaxed)
-                && matches!(app.model.stage, crate::native::model::Stage::Ready)
-            {
-                let session_id = app.model.root_session_id.clone();
-                app.open_file_pane(&session_id, "src/main.rs");
-                opened_in_ui.store(true, Ordering::Relaxed);
-            }
-            app.draw(ui);
-            loaded_in_ui.store(
-                app.model
-                    .file_editors
-                    .values()
-                    .any(|editor| editor.content_for_test().is_some()),
-                Ordering::Relaxed,
-            );
-            // The whole landing, not just the tab appearing: the file that defines the name
-            // is open, its text has arrived, and the find bar has laid the name out and been
-            // told how many it found. Settling on the tab alone snapshots a frame in the
-            // middle of all that, where the mark is not yet the current one.
-            let defined = app.model.layout.panes().find_map(|(pane_id, pane)| {
-                matches!(pane, Pane::File { file_path, .. } if file_path == "src/lib.rs")
-                    .then_some(pane_id)
-            });
-            defining_in_ui.store(
-                defined.is_some_and(|pane_id| {
-                    app.model
-                        .file_editors
-                        .get(&pane_id)
-                        .is_some_and(|editor| editor.content_for_test().is_some())
-                }) && app
-                    .model
-                    .find
-                    .as_ref()
-                    .is_some_and(|find| find.total > 0 && !find.pending),
-                Ordering::Relaxed,
-            );
-        });
-
-    assert!(
-        settle(&mut harness, || loaded.load(Ordering::Relaxed)),
-        "the file tab never opened"
-    );
-    harness.run_steps(2);
-
-    // The first name on the first line of the text, a couple of points in from the corner of
-    // the text area so the click is inside the word rather than on the margin beside it.
-    let word = harness
-        .get_by_role(egui::accesskit::Role::MultilineTextInput)
-        .rect()
-        .min
-        + egui::vec2(12.0, 10.0);
-    super::press_modifiers(&mut harness, egui::Modifiers::COMMAND);
-    super::click_like_a_hand(&mut harness, word, egui::Modifiers::COMMAND);
-    super::press_modifiers(&mut harness, egui::Modifiers::NONE);
-
-    assert!(
-        settle(&mut harness, || defining.load(Ordering::Relaxed)),
-        "the file that defines the name never opened"
-    );
-
-    harness
-        .ctx
-        .all_styles_mut(|style| style.visuals.text_cursor.blink = false);
-    // Long enough for the scroll bar the landing brought up to fade back out. Three frames
-    // catches it mid-fade, which is a different picture every time the machine is a different
-    // speed.
-    harness.run_steps(30);
-    harness.snapshot("file-definition-jump");
-}
-
-/// The same click in a file no language server serves, with the language-server side of the
-/// pane switched on: the pane asks whether anything serves the file, hears that nothing does,
-/// and the repo search answers exactly as it does with the servers switched off. Nothing is
-/// said about it either - a file with no server behind it is the normal state of most of a
-/// repo, not a fault - and no server is started, which is why the file is a `.txt` and the one
-/// that defines the name is a `.sh`.
-#[test]
-fn a_command_clicked_name_still_lands_when_no_language_server_serves_the_file() {
+fn a_command_clicked_name_in_a_file_no_server_serves_says_so_and_jumps_nowhere() {
     use egui_kittest::kittest::Queryable as _;
 
     let fixture = Fixture::new("file-definition-unserved");
-    fixture.write("scripts/deploy.sh", "function greet() {\n  echo hello\n}\n");
     // The name is the first thing on the first line, so the click has something to land on at
     // a spot that does not depend on how the text was laid out.
     fixture.write(
         "notes/plan.txt",
         "greet is what the script says at the end\nand nothing else here says it\n",
     );
-    fixture.commit("Add the script and the note");
+    fixture.commit("Add the note");
 
     let mut app = app_for(&fixture.root, ThemeMode::Dark);
     let opened = Arc::new(AtomicBool::new(false));
     let opened_in_ui = Arc::clone(&opened);
     let loaded = Arc::new(AtomicBool::new(false));
     let loaded_in_ui = Arc::clone(&loaded);
-    let defining = Arc::new(AtomicBool::new(false));
-    let defining_in_ui = Arc::clone(&defining);
-    let said_anything = Arc::new(AtomicBool::new(false));
-    let said_anything_in_ui = Arc::clone(&said_anything);
+    // Every message the window has up, and how many file tabs are open: the whole of what the
+    // click is allowed to have done.
+    let said = Arc::new(Mutex::new(Vec::<String>::new()));
+    let said_in_ui = Arc::clone(&said);
+    let file_panes = Arc::new(Mutex::new(0usize));
+    let file_panes_in_ui = Arc::clone(&file_panes);
 
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1200.0, 760.0))
@@ -173,9 +83,9 @@ fn a_command_clicked_name_still_lands_when_no_language_server_serves_the_file() 
                 app.open_file_pane(&session_id, "notes/plan.txt");
                 opened_in_ui.store(true, Ordering::Relaxed);
             }
-            // The tests keep the language-server side of a file pane off, so that a `.rs`
-            // pane in a test does not start the rust-analyzer this machine really has. This
-            // one is about that side of it, on files nothing serves.
+            // The tests keep the language-server side of a file pane off, so that a `.rs` pane
+            // in a test does not start the rust-analyzer this machine really has. This one is
+            // about that side of it, on a file nothing serves.
             for editor in app.model.file_editors.values_mut() {
                 editor.asks_language_servers_for_test();
             }
@@ -187,29 +97,18 @@ fn a_command_clicked_name_still_lands_when_no_language_server_serves_the_file() 
                     .any(|editor| editor.content_for_test().is_some()),
                 Ordering::Relaxed,
             );
-            if !app.model.toasts.is_empty() {
-                said_anything_in_ui.store(true, Ordering::Relaxed);
-            }
-            // The whole landing, not just the tab appearing: the file that defines the name
-            // is open, its text has arrived, and the find bar has laid the name out and been
-            // told how many it found.
-            let defined = app.model.layout.panes().find_map(|(pane_id, pane)| {
-                matches!(pane, Pane::File { file_path, .. } if file_path == "scripts/deploy.sh")
-                    .then_some(pane_id)
-            });
-            defining_in_ui.store(
-                defined.is_some_and(|pane_id| {
-                    app.model
-                        .file_editors
-                        .get(&pane_id)
-                        .is_some_and(|editor| editor.content_for_test().is_some())
-                }) && app
-                    .model
-                    .find
-                    .as_ref()
-                    .is_some_and(|find| find.total > 0 && !find.pending),
-                Ordering::Relaxed,
-            );
+            *said_in_ui.lock().expect("the messages are not shared") = app
+                .model
+                .toasts
+                .iter()
+                .map(|toast| toast.text.clone())
+                .collect();
+            *file_panes_in_ui.lock().expect("the count is not shared") = app
+                .model
+                .layout
+                .panes()
+                .filter(|(_, pane)| matches!(pane, Pane::File { .. }))
+                .count();
         });
 
     assert!(
@@ -227,13 +126,21 @@ fn a_command_clicked_name_still_lands_when_no_language_server_serves_the_file() 
     super::click_like_a_hand(&mut harness, word, egui::Modifiers::COMMAND);
     super::press_modifiers(&mut harness, egui::Modifiers::NONE);
 
+    let told = || {
+        said.lock()
+            .expect("the messages are not shared")
+            .iter()
+            .any(|text| text.contains("no language server serves notes/plan.txt"))
+    };
     assert!(
-        settle(&mut harness, || defining.load(Ordering::Relaxed)),
-        "the file that defines the name never opened"
+        settle(&mut harness, told),
+        "the click should have said which file nothing serves, saw {:?}",
+        said.lock().expect("the messages are not shared").clone()
     );
-    assert!(
-        !said_anything.load(Ordering::Relaxed),
-        "a file with no language server behind it should be searched quietly"
+    assert_eq!(
+        *file_panes.lock().expect("the count is not shared"),
+        1,
+        "a click nothing could answer should not have opened a tab"
     );
 }
 
@@ -398,6 +305,10 @@ fn typing_in_a_real_crate_offers_what_rust_analyzer_knows() {
     let ready_in_ui = Arc::clone(&ready);
     let labels = Arc::new(Mutex::new(Vec::<String>::new()));
     let labels_in_ui = Arc::clone(&labels);
+    // What is in the buffer, read out every frame: what taking a row put there is the other
+    // half of what this test is about.
+    let typed = Arc::new(Mutex::new(String::new()));
+    let typed_in_ui = Arc::clone(&typed);
 
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1200.0, 760.0))
@@ -428,6 +339,8 @@ fn typing_in_a_real_crate_offers_what_rust_analyzer_knows() {
                 if !offered.is_empty() {
                     *labels_in_ui.lock().expect("the labels are not shared") = offered;
                 }
+                *typed_in_ui.lock().expect("the text is not shared") =
+                    editor.text_for_test().to_string();
             }
         });
 
@@ -501,5 +414,19 @@ fn typing_in_a_real_crate_offers_what_rust_analyzer_knows() {
             .iter()
             .any(|label| label.starts_with("greet_loudly")),
         "expected the crate's own method among what was offered, saw {offered_labels:?}"
+    );
+
+    // And taking one writes the call rather than the bare name: a method is called, so the
+    // parentheses go in with it - see [`egui_moon_code_ide::calling`]. Which of the two methods
+    // is highlighted is the list's business, so the assertion is about the shape of what landed
+    // rather than about which name it is.
+    press_key(&mut harness, egui::Key::Enter, egui::Modifiers::NONE);
+    harness.run_steps(4);
+    let landed = typed.lock().expect("the text is not shared").clone();
+    let called = landed.lines().next().unwrap_or_default().to_string();
+    assert!(
+        called.starts_with("pub fn call_it(greeter: &Greeter) -> String { greeter.greet_")
+            && called.ends_with("()"),
+        "taking a method left the line reading {called:?}"
     );
 }

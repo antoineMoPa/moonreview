@@ -10,6 +10,7 @@ mod board_drag;
 mod board_selection;
 mod board_task_pane;
 mod diff_comments;
+mod diff_definition;
 mod diff_selection;
 mod file_editing;
 mod file_language_servers;

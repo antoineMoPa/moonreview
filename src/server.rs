@@ -41,9 +41,17 @@ pub(crate) fn build_state(last_activity: Arc<Mutex<Instant>>) -> AppState {
         agent_availability: detect_agent_availability(),
         last_activity: Arc::clone(&last_activity),
         terminals: Arc::new(crate::terminal::TerminalRegistry::new(last_activity)),
-        lsp: Arc::new(moon_lsp::LspRegistry::new(
-            crate::shell_path::installed_tools_path().to_string(),
-        )),
+        // The servers are told they are talking to this application rather than to the
+        // client crate they are reached through: `clientInfo` is what a server writes into
+        // its log, and a report about rust-analyzer under a review is only findable if the
+        // log says which program was asking.
+        lsp: Arc::new(
+            moon_lsp::LspRegistry::new(crate::shell_path::installed_tools_path().to_string())
+                .identifying_as(moon_lsp::ClientIdentity::new(
+                    "moonreview",
+                    env!("CARGO_PKG_VERSION"),
+                )),
+        ),
     }
 }
 

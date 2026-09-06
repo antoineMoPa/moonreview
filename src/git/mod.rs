@@ -104,6 +104,24 @@ pub(crate) fn changed_file_count(repo_path: &Path) -> Result<usize> {
         .count())
 }
 
+/// Read a file that is not in the repo at all: a dependency's source or the standard library,
+/// landed on by a jump to a definition.
+///
+/// The path is one [`crate::lsp::FilesNamedOutsideTheRepo`] has already resolved and vouched
+/// for - it is a file some language server named while answering the person's question - so
+/// the containment check that guards [`read_repo_file`] has nothing left to say about it.
+/// Which is why this is a function of its own rather than a flag on that one: the only caller
+/// that may reach it is the one holding an answer from the allow-list, and there is no
+/// argument anybody can pass to the ordinary read to get here.
+///
+/// Reading only. Editing a dependency in place is not what a jump into one is for, so
+/// [`write_repo_file`] keeps its containment check exactly as it is and has no counterpart
+/// here.
+pub(crate) fn read_file_named_outside_the_repo(real_path: &Path) -> Result<String> {
+    fs::read_to_string(real_path)
+        .with_context(|| format!("failed to read {}", real_path.display()))
+}
+
 pub(crate) fn read_repo_file(repo_path: &Path, file_path: &str) -> Result<String> {
     if file_path.trim().is_empty() {
         bail!("file path cannot be empty");

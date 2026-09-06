@@ -81,7 +81,7 @@ impl App {
                 let Some(editor) = model.file_editors.get_mut(&pane_id) else {
                     return;
                 };
-                editor.completing_mut().answered(&asked, result.ok());
+                editor.word_answered(&asked, result.ok());
             },
         );
     }

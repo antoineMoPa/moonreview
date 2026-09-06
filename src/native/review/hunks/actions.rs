@@ -373,6 +373,16 @@ pub(super) fn select_and_open(
     open_draft(app, session_id, hunk, anchor);
 }
 
+/// One row of a diff as the pointer finds it: where it was drawn, what is on it, the response
+/// that says what the pointer did there, and the ink the row is set in - a removal underlined
+/// in the ink of an addition would read as the wrong kind of row.
+pub(super) struct RowUnderThePointer<'a> {
+    pub(super) rect: egui::Rect,
+    pub(super) line: &'a DiffLine,
+    pub(super) response: &'a egui::Response,
+    pub(super) ink: egui::Color32,
+}
+
 /// ⌘ over a name on a diff row: underline it, and take the click on it as a jump to where the
 /// name is defined.
 ///
@@ -381,6 +391,13 @@ pub(super) fn select_and_open(
 /// pointer underlined and the cursor a pointing hand, and the click landing on the definition.
 /// Nothing about the plain click changes - it still selects the line and opens the composer,
 /// which is the other half of what this pane is for.
+///
+/// The language server answers, which makes the line the click was on a real question. An
+/// added or a context row is a line of the file as it stands, and the row's own new-file line
+/// number is where it is - so that, and how far into the row the name starts, is what the
+/// server is asked about. **A removed row is not in the file any more**: there is no place in
+/// it to ask about, so the name on such a row is not underlined, is not a link, and the click
+/// on it says why rather than opening a composer nobody asked for.
 ///
 /// Says whether the click was taken as a jump, so the row knows not to also select on it.
 ///
@@ -392,11 +409,15 @@ pub(super) fn jump_to_definition(
     app: &mut App,
     ui: &Ui,
     session_id: &str,
-    rect: egui::Rect,
-    line: &DiffLine,
-    response: &egui::Response,
-    ink: egui::Color32,
+    file_path: &str,
+    row: RowUnderThePointer<'_>,
 ) -> bool {
+    let RowUnderThePointer {
+        rect,
+        line,
+        response,
+        ink,
+    } = row;
     // Command on macOS, ctrl elsewhere - the same modifier the whole of
     // `crate::native::bindings` is written in, and the one the file pane's editor navigates
     // under. Exactly it: shift-⌘ is not this gesture, and shift-click is still the one that
@@ -412,8 +433,23 @@ pub(super) fn jump_to_definition(
     if !response.contains_pointer() {
         return false;
     }
-    let Some((from, to)) = name_at(line.body(), column_at(ui, rect, line, at.x)) else {
+    let body = line.body();
+    let Some((from, to)) = name_at(body, column_at(ui, rect, line, at.x)) else {
         return false;
+    };
+    let name: String = body.chars().skip(from).take(to - from).collect();
+
+    // A removed row: nothing to underline, and the click on it is answered rather than passed
+    // on to the selection. Silently doing nothing would read as the jump being broken, and
+    // opening a comment composer instead is not what ⌘ was held down for.
+    let Some(line_number) = line.new_line_number else {
+        if !response.clicked() {
+            return false;
+        }
+        app.model.info(format!(
+            "{name} is on a removed line, which the file does not hold any more"
+        ));
+        return true;
     };
 
     underline(ui, rect, line, from, to, ink);
@@ -422,8 +458,23 @@ pub(super) fn jump_to_definition(
     if !response.clicked() {
         return false;
     }
-    let name: String = line.body().chars().skip(from).take(to - from).collect();
-    crate::native::definition::look_up_in_review(app, session_id, name);
+    // What the server counts in: the line from zero, where the row counts from one, and bytes
+    // into that line, where the row was cut into characters to be drawn.
+    let at = crate::api::LspPosition {
+        line: line_number - 1,
+        column: body
+            .char_indices()
+            .nth(from)
+            .map(|(byte, _)| byte)
+            .unwrap_or(body.len()),
+    };
+    crate::native::definition::look_up_in_review(
+        app,
+        session_id,
+        file_path.to_string(),
+        at,
+        name,
+    );
     true
 }
 
